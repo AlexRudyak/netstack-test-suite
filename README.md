@@ -1,5 +1,6 @@
 # Network Stack Test Suite
 
+[![CI](https://github.com/AlexRudyak/netstack-test-suite/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexRudyak/netstack-test-suite/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 ![Interface](https://img.shields.io/badge/interface-CLI%20%2B%20GUI-brightgreen)

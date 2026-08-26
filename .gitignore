@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# PyInstaller build output
+build/
+dist/
+*.spec.bak
+
+# Generated run artifacts (results, pcaps, PDF reports)
+reports/*
+!reports/.gitkeep
+
+.vscode/
+.idea/

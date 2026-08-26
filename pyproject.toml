@@ -1,0 +1,48 @@
+[project]
+name = "netstack-test-suite"
+version = "0.1.0"
+description = "Modular RFC conformance and vulnerability test suite for a custom L3/L4 network stack, driven over real Ethernet via Scapy."
+requires-python = ">=3.11"
+dependencies = [
+    "scapy>=2.5.0",
+    "pytest>=8.0.0",
+    "pytest-reportlog>=0.4.0",  # provides --report-log, the runner's progress stream
+    "click>=8.1.0",
+    "reportlab>=4.0.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PySide6>=6.6.0",
+    "pyqtgraph>=0.13.3",
+]
+dev = [
+    "pytest-qt>=4.4.0",
+    "pytest-cov>=5.0.0",
+    "pyinstaller>=6.0.0",
+]
+
+[project.scripts]
+netstack-cli = "src.cli.main:cli"
+netstack-gui = "src.gui.app:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "ip: IP (RFC 791) layer tests",
+    "udp: UDP (RFC 768) layer tests",
+    "tcp: TCP (RFC 9293) layer tests",
+    "syn: TCP SYN / connection establishment tests",
+    "state_machine: TCP state transition tests (FIN, RST, simultaneous open/close)",
+    "congestion: TCP congestion control / flow control tests",
+    "icmp: ICMP (RFC 792) layer tests",
+    "vuln: Tests that send intentionally malformed or attack-pattern traffic at the DUT",
+    "slow: Long-running tests (floods, timing-sensitive tests)",
+    "internal: Self-validation tests for the framework itself (no DUT/interface required)",
+    "client: Test where the suite is the initiator (sends probes, validates the DUT responder)",
+    "server: Test where the suite is the responder (the DUT initiates; validates the DUT client)",
+]
+testpaths = ["tests", "tests_internal"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]

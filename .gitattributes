@@ -1,0 +1,13 @@
+# Normalize line endings: text files stored as LF in the repo, checked out
+# native. Keeps diffs clean across Windows/Linux contributors.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Binary / generated assets — never touch line endings, never diff.
+*.png binary
+*.pcap binary
+*.pdf binary
+*.exe binary

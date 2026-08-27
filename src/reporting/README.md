@@ -30,6 +30,11 @@ the same structure (via `report_data.py`, so they stay consistent):
 5. **Appendix A — Test catalog** — every test, description, RFC, roles.
 6. **Appendix B — RFC reference index** — the reading list.
 
+![The generated HTML report](../../docs/images/report-html.png)
+
+*Findings lead the document: the failing test's title, its RFC clause,
+what it checks, and what the DUT actually did.*
+
 ## report_data.py
 
 | Symbol | Signature | Description |

@@ -14,6 +14,12 @@ The suite is built to produce a **developer-oriented report** (HTML/PDF)
 that leads with the failures, the RFC clause each one violates, and what
 the DUT actually did — so it can be handed to whoever fixes the stack.
 
+![The netstack-gui main window](docs/images/gui-main-window.png)
+
+*`netstack-gui` mid-run: DUT configuration up top, the test picker and
+per-test description on the left, live tx/rx plot on the right, and the
+run summary with report export along the bottom.*
+
 ## Highlights
 
 - **CLI and GUI**, both driving the same subprocess-based orchestration layer (`src/runner.py`) — never diverging in how a run is invoked.
@@ -97,11 +103,20 @@ Start at [`src/README.md`](src/README.md) — the module map. Per-package docs:
 - [`tests/README.md`](tests/README.md) — the DUT-facing suite (per-module + per-test docs)
 - [`tests_internal/README.md`](tests_internal/README.md) — framework self-validation
 
+## What the output looks like
+
+The report is the artifact you hand to whoever fixes the stack — findings
+first, each naming its RFC clause, what the test checked, and what the DUT
+actually did:
+
+![The generated HTML conformance report](docs/images/report-html.png)
+
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — design decisions and why
 - [`docs/getting_started.md`](docs/getting_started.md) — install and privilege setup
 - [`docs/rfc_coverage.md`](docs/rfc_coverage.md) — RFC clause → test file matrix
+- [`docs/screenshots.md`](docs/screenshots.md) — every UI element, in one place
 
 ## Development
 

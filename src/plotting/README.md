@@ -41,6 +41,11 @@ timer). Emitting a Qt signal per packet would stall the event loop.
 
 Requires the optional `gui` extra (PySide6, pyqtgraph).
 
+![Live tx/rx plot during a run](../../docs/images/gui-live-plot.png)
+
+Sent and Received are cumulative; the gap between them is probes that
+drew no reply.
+
 ## static_charts.py
 
 Forces the Agg backend at import (`matplotlib.use("Agg")`) — no display
@@ -52,3 +57,7 @@ needed, safe in CI and inside the pytest subprocess.
 | `render_pass_fail_summary` | `(result, output_path) -> Path` | Passed / Failed / Skipped-or-Error bar chart → PNG. |
 
 Both are consumed by `reporting/pdf_report.py`.
+
+| `render_packet_timeline` | `render_pass_fail_summary` |
+|---|---|
+| ![Packet timeline chart](../../docs/images/chart-packet-timeline.png) | ![Pass/fail summary chart](../../docs/images/chart-pass-fail-summary.png) |

@@ -6,7 +6,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 ![Interface](https://img.shields.io/badge/interface-CLI%20%2B%20GUI-brightgreen)
 [![Conventional Commits](https://img.shields.io/badge/commits-conventional-fe5196)](https://www.conventionalcommits.org/en/v1.0.0/)
-[![Created with Claude](https://img.shields.io/badge/created%20with-Claude-d97757)](https://claude.com/claude-code)
+[![Made with Claude](https://img.shields.io/badge/made%20with-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
 A modular test suite for validating a custom L3/L4 network stack (the
 Device Under Test, **DUT**) over real Ethernet — RFC conformance and

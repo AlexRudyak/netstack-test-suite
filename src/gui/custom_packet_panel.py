@@ -5,6 +5,7 @@ the automated suite uses.
 """
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -48,7 +50,9 @@ class CustomPacketPanel(QWidget):
         self._ttl.setValue(64)
         self._tcp_flags = QLineEdit("S")
 
-        form = QFormLayout()
+        fields_box = QGroupBox("Packet fields")
+        form = QFormLayout(fields_box)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         form.addRow("Protocol", self._proto)
         form.addRow("Interface", self._iface)
         form.addRow("Source IP", self._src_ip)
@@ -108,12 +112,28 @@ class CustomPacketPanel(QWidget):
 
         self._response_view = QPlainTextEdit()
         self._response_view.setReadOnly(True)
+        self._response_view.setMinimumHeight(120)
+
+        # Everything lives inside a scroll area with a bounded content width.
+        # Without this, maximizing the window stretches every field across the
+        # full screen width and vertically distorts the form rows.
+        content = QWidget()
+        content.setMaximumWidth(760)
+        content_layout = QVBoxLayout(content)
+        content_layout.addWidget(fields_box)
+        content_layout.addWidget(payload_box)
+        content_layout.addWidget(send_button)
+        content_layout.addWidget(self._response_view)
+        content_layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(payload_box)
-        layout.addWidget(send_button)
-        layout.addWidget(self._response_view)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
 
     def _on_mode_changed(self) -> None:
         self._payload_stack.setCurrentIndex(1 if self._mode_custom.isChecked() else 0)

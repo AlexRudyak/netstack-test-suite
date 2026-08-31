@@ -68,7 +68,8 @@ threaded through the CLI, GUI, and every DUT-facing fixture.
 | `target_ip: str` | DUT IP |
 | `target_stack: "linux" \| "windows"` | Which target profile to assert against |
 | `target_mac: str \| None` | DUT MAC (falls back to broadcast if unset) |
-| `target_port: int = 80` | Default port for tests that need one |
+| `target_port: int \| None` | Port for tests that need one; `None` ⇒ each front end resolves it to one random ephemeral port for the session (`random_ephemeral_port()`) |
+| `source_port: int \| None` | Optional fixed local source port; `None` ⇒ each test picks its own |
 | `timeout: float = 2.0`, `retries: int = 2` | Send/receive timing |
 | `allowed_targets: tuple[str, ...]` | CIDR ranges authorized for `vuln` tests |
 | `role: Role` | Which side the suite plays — `Role.CLIENT` (initiator) or `Role.SERVER` (responder) |

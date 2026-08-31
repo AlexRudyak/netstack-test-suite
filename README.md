@@ -29,7 +29,7 @@ run summary with report export along the bottom.*
 - **Runs against a Linux- or Windows-based DUT**, selected explicitly (`--target-stack`), independent of whichever OS the suite itself runs on. See [`docs/architecture.md`](docs/architecture.md).
 - **Client or server role** (`--role`) — the suite can initiate (validating the DUT's responder) or respond while the DUT initiates (validating the DUT's client path).
 - **Per-test catalog** — every test carries a description, RFC clause, and roles, surfaced in the GUI and the report appendix.
-- **Addressable DUT target** — interface, target IP/MAC, target stack, and an optional fixed source port / destination port (`--dut-port` / `--dut-source-port`, or the GUI's DUT configuration form).
+- **Addressable DUT target** — interface, target IP/MAC, target stack, and optional ports (`--dut-port` / `--dut-source-port`, or the GUI's DUT configuration form): leave the destination port unset and one random ephemeral port is chosen for the whole session; set it and every port-specific test uses exactly that.
 - **Custom/raw L7 payloads** — zeros, ones, random, or user-supplied text/hex/file — usable by the automated suite and via an ad-hoc Custom Packet sender.
 - **Passive pcap recorder** (`netstack-cli record`) and an **opt-in tshark-style debug log** (`run --debug`) for wire-level forensics.
 - **Real-time plotting** of traffic during a run (GUI), plus a **developer-oriented PDF/HTML report** with a findings section, artifacts/repro, and appendices (full test catalog + RFC index).

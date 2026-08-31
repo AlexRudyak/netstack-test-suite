@@ -23,7 +23,7 @@ report. Exits non-zero if any test failed.
 | `--iface TEXT` | **required** | local interface facing the DUT |
 | `--dut-ip TEXT` | **required** | |
 | `--dut-mac TEXT` | — | |
-| `--dut-port INT` | 80 | DUT port that port-specific tests target |
+| `--dut-port INT` | random | DUT port that port-specific tests target; omitted ⇒ one random ephemeral port for the whole run (echoed at startup) |
 | `--dut-source-port INT` | — | optional fixed local source port; default lets each test pick its own |
 | `--target-stack {linux,windows}` | **required** | selects the [target profile](../target_profiles/README.md) |
 | `--role {client,server}` | `client` | client = suite initiates (validates DUT responder); server = suite responds (validates DUT client). Tests not marked for the role are skipped. |

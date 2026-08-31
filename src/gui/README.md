@@ -33,8 +33,9 @@ after any GUI change to refresh them.
 ```
 MainWindow
 ├── DUT configuration group  (interface, target IP/MAC, optional source
-│                             /destination port, target stack, role,
-│                             allowed CIDRs, vuln-confirm, debug checkboxes)
+│                             port, destination port [blank = random],
+│                             target stack, role, allowed CIDRs,
+│                             vuln-confirm, debug checkboxes)
 ├── Tabs
 │   ├── Automated Suite
 │   │   ├── TestTreeWidget  +  Run / Stop
@@ -66,7 +67,8 @@ The DUT configuration group built by `_build_config_group()`:
 
 | Method | Description |
 |---|---|
-| `_build_config_group()` | DUT config form: interface, target IP/MAC, optional **Source port** (spinbox showing `auto` at 0 → `None`) and **Destination port**, target stack, role, allowed CIDRs, plus the **Debug mode** and vuln-authorization checkboxes. |
+| `_build_config_group()` | DUT config form: interface, target IP/MAC, optional **Source port** (spinbox showing `auto` at 0 → `None`), **Destination port** (spinbox showing `random` at 0), target stack, role, allowed CIDRs, plus the **Debug mode** and vuln-authorization checkboxes. |
+| `_resolved_dst_port()` | The Destination port field, or a session-stable random ephemeral port (`src.config.random_ephemeral_port`) when it's left on `random`. Chosen once, then reused for every run in the session; logged on the run that first picks it. |
 | `_build_suite_tab()` | Test tree + Run/Stop + live-plot/log tabs. |
 | `_current_dut_config() -> DUTConfig` | Reads the form into a `DUTConfig`. |
 | `_on_run_clicked()` | Switches to the Log tab, runs the **preflight** check (aborting with a logged reason on a hard blocker), derives scope from the tree, builds a `RunRequest` (with `debug`/`confirm_vuln_tests`), starts the controller. |

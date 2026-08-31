@@ -79,7 +79,9 @@ Registered in the root [`conftest.py`](../conftest.py), the suite
 
 ## pytest options
 
-`--target-stack`, `--dut-ip`, `--dut-iface`, `--dut-mac`, `--dut-port`,
+`--target-stack`, `--dut-ip`, `--dut-iface`, `--dut-mac`,
+`--dut-port` (omitted ⇒ one random ephemeral port for the session, chosen
+once in the session-scoped `dut_config` fixture),
 `--dut-source-port` (optional fixed local source port; default per-test),
 `--payload-mode`, `--payload-size`, `--payload-text/-hex/-file`,
 `--allowed-targets` (repeatable), `--confirm-vuln-tests`,

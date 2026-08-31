@@ -218,6 +218,8 @@ def find_item(tree, *labels) -> QTreeWidgetItem | None:
 def fill_config(window) -> None:
     window._target_ip.setText(DOC_TARGET_IP)
     window._target_mac.setText(DOC_TARGET_MAC)
+    window._dst_port.setValue(80)
+    window._src_port.setValue(0)  # "auto"
     window._allowed_targets.setText(DOC_ALLOWED_CIDR)
     window._target_stack.setCurrentText("linux")
     window._role.setCurrentText("client")
@@ -269,7 +271,7 @@ def shot_config_group() -> None:
     window = MainWindow()
     fill_config(window)
     group = window.centralWidget().layout().itemAt(0).widget()
-    capture(group, "gui-dut-configuration", (780, 330))
+    capture(group, "gui-dut-configuration", (780, 400))
     window.close()
 
 

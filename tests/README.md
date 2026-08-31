@@ -80,6 +80,7 @@ Registered in the root [`conftest.py`](../conftest.py), the suite
 ## pytest options
 
 `--target-stack`, `--dut-ip`, `--dut-iface`, `--dut-mac`, `--dut-port`,
+`--dut-source-port` (optional fixed local source port; default per-test),
 `--payload-mode`, `--payload-size`, `--payload-text/-hex/-file`,
 `--allowed-targets` (repeatable), `--confirm-vuln-tests`,
 `--live-events-log`, `--capture-pcap`, `--debug-log`. All are optional so

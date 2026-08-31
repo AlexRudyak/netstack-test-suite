@@ -1,9 +1,12 @@
 # Network Stack Test Suite
 
 [![CI](https://github.com/AlexRudyak/netstack-test-suite/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexRudyak/netstack-test-suite/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AlexRudyak/netstack-test-suite?sort=semver)](https://github.com/AlexRudyak/netstack-test-suite/releases)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 ![Interface](https://img.shields.io/badge/interface-CLI%20%2B%20GUI-brightgreen)
+[![Conventional Commits](https://img.shields.io/badge/commits-conventional-fe5196)](https://www.conventionalcommits.org/en/v1.0.0/)
+[![Created with Claude](https://img.shields.io/badge/created%20with-Claude-d97757)](https://claude.com/claude-code)
 
 A modular test suite for validating a custom L3/L4 network stack (the
 Device Under Test, **DUT**) over real Ethernet — RFC conformance and
@@ -26,6 +29,7 @@ run summary with report export along the bottom.*
 - **Runs against a Linux- or Windows-based DUT**, selected explicitly (`--target-stack`), independent of whichever OS the suite itself runs on. See [`docs/architecture.md`](docs/architecture.md).
 - **Client or server role** (`--role`) — the suite can initiate (validating the DUT's responder) or respond while the DUT initiates (validating the DUT's client path).
 - **Per-test catalog** — every test carries a description, RFC clause, and roles, surfaced in the GUI and the report appendix.
+- **Addressable DUT target** — interface, target IP/MAC, target stack, and an optional fixed source port / destination port (`--dut-port` / `--dut-source-port`, or the GUI's DUT configuration form).
 - **Custom/raw L7 payloads** — zeros, ones, random, or user-supplied text/hex/file — usable by the automated suite and via an ad-hoc Custom Packet sender.
 - **Passive pcap recorder** (`netstack-cli record`) and an **opt-in tshark-style debug log** (`run --debug`) for wire-level forensics.
 - **Real-time plotting** of traffic during a run (GUI), plus a **developer-oriented PDF/HTML report** with a findings section, artifacts/repro, and appendices (full test catalog + RFC index).

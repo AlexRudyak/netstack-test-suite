@@ -32,7 +32,8 @@ after any GUI change to refresh them.
 
 ```
 MainWindow
-├── DUT configuration group  (interface, target IP/MAC, target stack,
+├── DUT configuration group  (interface, target IP/MAC, optional source
+│                             /destination port, target stack, role,
 │                             allowed CIDRs, vuln-confirm, debug checkboxes)
 ├── Tabs
 │   ├── Automated Suite
@@ -65,7 +66,7 @@ The DUT configuration group built by `_build_config_group()`:
 
 | Method | Description |
 |---|---|
-| `_build_config_group()` | DUT config form (incl. **Debug mode** and vuln-authorization checkboxes). |
+| `_build_config_group()` | DUT config form: interface, target IP/MAC, optional **Source port** (spinbox showing `auto` at 0 → `None`) and **Destination port**, target stack, role, allowed CIDRs, plus the **Debug mode** and vuln-authorization checkboxes. |
 | `_build_suite_tab()` | Test tree + Run/Stop + live-plot/log tabs. |
 | `_current_dut_config() -> DUTConfig` | Reads the form into a `DUTConfig`. |
 | `_on_run_clicked()` | Switches to the Log tab, runs the **preflight** check (aborting with a logged reason on a hard blocker), derives scope from the tree, builds a `RunRequest` (with `debug`/`confirm_vuln_tests`), starts the controller. |
@@ -155,6 +156,10 @@ form fields + an L7 payload mode selector (Zeros / Ones / Random / Custom);
 generated modes show a size field, Custom shows text/hex/file sub-fields.
 `Send` builds a `CustomPacketSpec` and calls `send_custom_packet`,
 displaying the reply (errors are shown in-panel, never crash the GUI).
+
+The whole panel sits in a `QScrollArea` with a bounded content width, so
+maximizing the window leaves the fields at a usable size instead of
+stretching them across the screen.
 
 ![Custom Packet panel in Random payload mode](../../docs/images/gui-custom-packet.png)
 

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.config import DUTConfig, Role
+from src.config import DUTConfig, Role, random_ephemeral_port
 from src.gui.custom_packet_panel import CustomPacketPanel
 from src.gui.log_panel import LogPanel
 from src.gui.report_panel import ReportPanel
@@ -42,6 +42,9 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self._metrics = MetricsBuffer()
+        # Chosen once, the first time a run leaves the destination port unset,
+        # then reused for the rest of the session.
+        self._session_random_dst_port: int | None = None
         self._controller = RunController(self)
         self._controller.test_event.connect(self._on_test_event)
         self._controller.packet_event.connect(self._on_packet_event)
@@ -79,9 +82,13 @@ class MainWindow(QMainWindow):
         self._src_port.setValue(0)
         self._src_port.setToolTip("Optional fixed local source port. 'auto' lets each test pick its own.")
         self._dst_port = QSpinBox()
-        self._dst_port.setRange(1, 65535)
-        self._dst_port.setValue(80)
-        self._dst_port.setToolTip("DUT port that port-specific tests target.")
+        self._dst_port.setRange(0, 65535)
+        self._dst_port.setSpecialValueText("random")
+        self._dst_port.setValue(0)
+        self._dst_port.setToolTip(
+            "DUT port that port-specific tests target. 'random' picks one ephemeral "
+            "port and reuses it for the whole session."
+        )
         self._target_stack = QComboBox()
         self._target_stack.addItems(["linux", "windows"])
         self._role = QComboBox()
@@ -140,6 +147,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(splitter)
         return widget
 
+    def _resolved_dst_port(self) -> int:
+        """The Destination port field, or a session-stable random ephemeral
+        port when it's left on 'random' (spinbox value 0)."""
+        if self._dst_port.value():
+            return self._dst_port.value()
+        if self._session_random_dst_port is None:
+            self._session_random_dst_port = random_ephemeral_port()
+        return self._session_random_dst_port
+
     def _current_dut_config(self) -> DUTConfig:
         allowed = tuple(x.strip() for x in self._allowed_targets.text().split(",") if x.strip())
         return DUTConfig(
@@ -147,7 +163,7 @@ class MainWindow(QMainWindow):
             target_ip=self._target_ip.text(),
             target_stack=self._target_stack.currentText(),
             target_mac=self._target_mac.text() or None,
-            target_port=self._dst_port.value(),
+            target_port=self._resolved_dst_port(),
             source_port=self._src_port.value() or None,
             allowed_targets=allowed,
             role=Role(self._role.currentText()),
@@ -166,6 +182,10 @@ class MainWindow(QMainWindow):
         self._right_tabs.setCurrentWidget(self._log_panel)
 
         config = self._current_dut_config()
+        if not self._dst_port.value():
+            self._log_panel.append_line(
+                f"Destination port left on 'random' — using {config.target_port} for this session."
+            )
 
         # Preflight first: validate config + privileges and probe the DUT,
         # reporting the outcome. Hard blockers abort before launching pytest;

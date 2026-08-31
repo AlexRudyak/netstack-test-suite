@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import DUTConfig, Role
+from src.config import DUTConfig, Role, random_ephemeral_port
 from src.packet_engine.interface import NetworkInterface
 from src.packet_engine.payloads import PayloadMode
 from src.reporting.collector import PacketEventLogWriter
@@ -71,7 +71,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--dut-ip", default=None, help="DUT IP address.")
     group.addoption("--dut-iface", default=None, help="Local Ethernet interface facing the DUT.")
     group.addoption("--dut-mac", default=None, help="DUT MAC address.")
-    group.addoption("--dut-port", type=int, default=80, help="Default DUT port for tests that need one.")
+    group.addoption(
+        "--dut-port",
+        type=int,
+        default=None,
+        help="DUT port for tests that need one. Omitted: a random ephemeral port is "
+        "chosen once for the whole session.",
+    )
     group.addoption(
         "--dut-source-port",
         type=int,
@@ -131,12 +137,18 @@ def dut_config(pytestconfig: pytest.Config) -> DUTConfig:
             "This test requires a DUT target, missing: "
             f"{', '.join(missing)}. (Running tests_internal/ alone needs none of these.)"
         )
+    # Unspecified destination port ⇒ one random ephemeral port for the whole
+    # session (this fixture is session-scoped, so it's resolved exactly once).
+    target_port = pytestconfig.getoption("--dut-port")
+    if target_port is None:
+        target_port = random_ephemeral_port()
+
     return DUTConfig(
         interface=iface,
         target_ip=target_ip,
         target_stack=target_stack,
         target_mac=pytestconfig.getoption("--dut-mac"),
-        target_port=pytestconfig.getoption("--dut-port"),
+        target_port=target_port,
         source_port=pytestconfig.getoption("--dut-source-port"),
         allowed_targets=tuple(pytestconfig.getoption("--allowed-targets")),
         role=Role(pytestconfig.getoption("--role")),

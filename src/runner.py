@@ -120,7 +120,6 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
         f"--role={request.role.value}",
         f"--dut-ip={request.config.target_ip}",
         f"--dut-iface={request.config.interface}",
-        f"--dut-port={request.config.target_port}",
         f"--payload-mode={request.payload_mode.value}",
         f"--payload-size={request.payload_size}",
         f"--live-events-log={run_dir / 'packet_events.jsonl'}",
@@ -129,6 +128,9 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
     ]
     if request.config.target_mac:
         args.append(f"--dut-mac={request.config.target_mac}")
+    # None ⇒ let the subprocess conftest pick one random port for its session.
+    if request.config.target_port is not None:
+        args.append(f"--dut-port={request.config.target_port}")
     if request.config.source_port is not None:
         args.append(f"--dut-source-port={request.config.source_port}")
     if request.test_name:

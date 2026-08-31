@@ -15,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from src.config import DUTConfig, Role
+from src.config import DUTConfig, Role, random_ephemeral_port
 from src.custom_packet.builder import CustomPacketSpec
 from src.custom_packet.sender import send_custom_packet
 from src.packet_engine.payloads import PayloadMode, from_file, from_hex, from_text
@@ -41,7 +41,13 @@ def cli() -> None:
 @click.option("--iface", required=True, help="Local Ethernet interface facing the DUT.")
 @click.option("--dut-ip", required=True)
 @click.option("--dut-mac", default=None)
-@click.option("--dut-port", type=int, default=80, help="DUT port that port-specific tests target.")
+@click.option(
+    "--dut-port",
+    type=int,
+    default=None,
+    help="DUT port that port-specific tests target. Omit it and a random ephemeral "
+    "port is chosen once for the whole run.",
+)
 @click.option(
     "--dut-source-port",
     type=int,
@@ -99,6 +105,11 @@ def run(
       netstack-cli run --module tcp --submodule syn --iface eth0 --dut-ip 10.0.0.5 --target-stack windows
       netstack-cli run --test test_three_way_handshake --iface eth0 --dut-ip 10.0.0.5 --target-stack linux
     """
+    # No --dut-port ⇒ pick one random ephemeral port and use it for the run.
+    if dut_port is None:
+        dut_port = random_ephemeral_port()
+        click.echo(f"No --dut-port given — using random destination port {dut_port} for this run.")
+
     config = DUTConfig(
         interface=iface,
         target_ip=dut_ip,

@@ -74,11 +74,20 @@ def test_payload_and_target_stack_are_passed(tmp_path: Path) -> None:
     assert "--target-stack=linux" in args
 
 
-def test_dut_port_is_always_passed(tmp_path: Path) -> None:
+def test_dut_port_arg_is_opt_in(tmp_path: Path) -> None:
+    # Unset ⇒ not passed; the subprocess conftest picks one random port.
     args = build_pytest_args(RunRequest(config=_config()), tmp_path)
-    assert "--dut-port=80" in args
+    assert not any(a.startswith("--dut-port=") for a in args)
     custom = DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux", target_port=8080)
     assert "--dut-port=8080" in build_pytest_args(RunRequest(config=custom), tmp_path)
+
+
+def test_random_ephemeral_port_is_in_iana_dynamic_range() -> None:
+    from src.config import EPHEMERAL_PORT_RANGE, random_ephemeral_port
+
+    lo, hi = EPHEMERAL_PORT_RANGE
+    for _ in range(200):
+        assert lo <= random_ephemeral_port() <= hi
 
 
 def test_source_port_arg_is_opt_in(tmp_path: Path) -> None:

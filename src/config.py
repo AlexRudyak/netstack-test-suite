@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import secrets
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -18,6 +19,16 @@ from typing import Literal
 TargetStackName = Literal["linux", "windows"]
 
 DEFAULT_CONFIG_PATH = Path.home() / ".netstack_test_suite" / "config.json"
+
+# IANA dynamic/ephemeral range — used when no destination port is configured.
+EPHEMERAL_PORT_RANGE = (49152, 65535)
+
+
+def random_ephemeral_port() -> int:
+    """A random port in the IANA dynamic range, chosen once per session when
+    the destination port is left unspecified."""
+    lo, hi = EPHEMERAL_PORT_RANGE
+    return lo + secrets.randbelow(hi - lo + 1)
 
 
 class Role(Enum):
@@ -45,7 +56,11 @@ class DUTConfig:
     target_ip: str
     target_stack: TargetStackName
     target_mac: str | None = None
-    target_port: int = 80
+    # DUT port the port-specific tests target. None ⇒ a single random
+    # ephemeral port is chosen once and used for the whole session (both
+    # front ends resolve it before building this config, so by the time a
+    # test sees it, it is always a concrete int).
+    target_port: int | None = None
     # Optional fixed local source port. None ⇒ each test picks its own
     # (the historical behavior: per-test counters / hardcoded ports).
     source_port: int | None = None
@@ -74,7 +89,7 @@ class DUTConfig:
             target_ip=data["target_ip"],
             target_stack=data["target_stack"],
             target_mac=data.get("target_mac"),
-            target_port=data.get("target_port", 80),
+            target_port=data.get("target_port"),
             source_port=data.get("source_port"),
             timeout=data.get("timeout", 2.0),
             retries=data.get("retries", 2),

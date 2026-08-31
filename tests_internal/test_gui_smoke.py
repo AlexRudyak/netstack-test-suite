@@ -170,6 +170,25 @@ def test_role_selector_feeds_run_request(qtbot, monkeypatch) -> None:
     assert captured["request"].role is Role.SERVER
 
 
+def test_blank_destination_port_yields_one_stable_random_port(qtbot) -> None:
+    """Leaving the Destination port on 'random' picks a single ephemeral
+    port and reuses it for every config read in the session."""
+    from src.config import EPHEMERAL_PORT_RANGE
+    from src.gui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window._dst_port.value() == 0  # 'random'
+    first = window._current_dut_config().target_port
+    lo, hi = EPHEMERAL_PORT_RANGE
+    assert lo <= first <= hi
+    assert window._current_dut_config().target_port == first  # stable
+
+    window._dst_port.setValue(4444)
+    assert window._current_dut_config().target_port == 4444
+
+
 def test_failed_preflight_blocks_run_and_reports(qtbot, monkeypatch) -> None:
     """The reported bug: a run that can't proceed must report to the user
     and not silently start. A failing preflight blocks controller.start

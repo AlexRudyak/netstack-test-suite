@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -72,6 +73,15 @@ class MainWindow(QMainWindow):
         self._iface_combo.addItems(_list_interface_names())
         self._target_ip = QLineEdit()
         self._target_mac = QLineEdit()
+        self._src_port = QSpinBox()
+        self._src_port.setRange(0, 65535)
+        self._src_port.setSpecialValueText("auto")
+        self._src_port.setValue(0)
+        self._src_port.setToolTip("Optional fixed local source port. 'auto' lets each test pick its own.")
+        self._dst_port = QSpinBox()
+        self._dst_port.setRange(1, 65535)
+        self._dst_port.setValue(80)
+        self._dst_port.setToolTip("DUT port that port-specific tests target.")
         self._target_stack = QComboBox()
         self._target_stack.addItems(["linux", "windows"])
         self._role = QComboBox()
@@ -88,6 +98,8 @@ class MainWindow(QMainWindow):
         form.addRow("Interface", self._iface_combo)
         form.addRow("Target IP", self._target_ip)
         form.addRow("Target MAC (optional)", self._target_mac)
+        form.addRow("Source port (optional)", self._src_port)
+        form.addRow("Destination port", self._dst_port)
         form.addRow("Target stack", self._target_stack)
         form.addRow("Role", self._role)
         form.addRow("Allowed targets (CIDR)", self._allowed_targets)
@@ -135,6 +147,8 @@ class MainWindow(QMainWindow):
             target_ip=self._target_ip.text(),
             target_stack=self._target_stack.currentText(),
             target_mac=self._target_mac.text() or None,
+            target_port=self._dst_port.value(),
+            source_port=self._src_port.value() or None,
             allowed_targets=allowed,
             role=Role(self._role.currentText()),
         )

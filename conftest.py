@@ -73,6 +73,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--dut-mac", default=None, help="DUT MAC address.")
     group.addoption("--dut-port", type=int, default=80, help="Default DUT port for tests that need one.")
     group.addoption(
+        "--dut-source-port",
+        type=int,
+        default=None,
+        help="Optional fixed local source port for tests that honor it (default: per-test).",
+    )
+    group.addoption(
         "--payload-mode",
         choices=[m.value for m in PayloadMode],
         default="random",
@@ -131,6 +137,7 @@ def dut_config(pytestconfig: pytest.Config) -> DUTConfig:
         target_stack=target_stack,
         target_mac=pytestconfig.getoption("--dut-mac"),
         target_port=pytestconfig.getoption("--dut-port"),
+        source_port=pytestconfig.getoption("--dut-source-port"),
         allowed_targets=tuple(pytestconfig.getoption("--allowed-targets")),
         role=Role(pytestconfig.getoption("--role")),
     )

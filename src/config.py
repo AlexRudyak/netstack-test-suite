@@ -46,6 +46,9 @@ class DUTConfig:
     target_stack: TargetStackName
     target_mac: str | None = None
     target_port: int = 80
+    # Optional fixed local source port. None ⇒ each test picks its own
+    # (the historical behavior: per-test counters / hardcoded ports).
+    source_port: int | None = None
     timeout: float = 2.0
     retries: int = 2
     role: Role = Role.CLIENT
@@ -72,6 +75,7 @@ class DUTConfig:
             target_stack=data["target_stack"],
             target_mac=data.get("target_mac"),
             target_port=data.get("target_port", 80),
+            source_port=data.get("source_port"),
             timeout=data.get("timeout", 2.0),
             retries=data.get("retries", 2),
             allowed_targets=tuple(data.get("allowed_targets", [])),
@@ -88,6 +92,7 @@ class DUTConfig:
                     "target_stack": self.target_stack,
                     "target_mac": self.target_mac,
                     "target_port": self.target_port,
+                    "source_port": self.source_port,
                     "timeout": self.timeout,
                     "retries": self.retries,
                     "allowed_targets": list(self.allowed_targets),

@@ -41,6 +41,13 @@ def cli() -> None:
 @click.option("--iface", required=True, help="Local Ethernet interface facing the DUT.")
 @click.option("--dut-ip", required=True)
 @click.option("--dut-mac", default=None)
+@click.option("--dut-port", type=int, default=80, help="DUT port that port-specific tests target.")
+@click.option(
+    "--dut-source-port",
+    type=int,
+    default=None,
+    help="Optional fixed local source port for tests that honor it (default: per-test).",
+)
 @click.option("--target-stack", type=click.Choice(["linux", "windows"]), required=True)
 @click.option(
     "--role",
@@ -73,6 +80,8 @@ def run(
     iface: str,
     dut_ip: str,
     dut_mac: str | None,
+    dut_port: int,
+    dut_source_port: int | None,
     target_stack: str,
     role: str,
     payload_mode: str,
@@ -95,6 +104,8 @@ def run(
         target_ip=dut_ip,
         target_stack=target_stack,
         target_mac=dut_mac,
+        target_port=dut_port,
+        source_port=dut_source_port,
         allowed_targets=tuple(allowed_targets),
         role=Role(role),
     )

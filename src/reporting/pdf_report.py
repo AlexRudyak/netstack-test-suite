@@ -45,6 +45,7 @@ def generate_pdf_report(result: TestRunResult, output_path: Path) -> Path:
     meta_pairs = [
         ("Run ID", result.run_id),
         ("Target", f"{result.target_ip} (stack: {result.target_stack})"),
+        ("Suite role", result.role_description),
         ("Host platform", result.host_platform),
         ("Payload mode", result.payload_mode),
         ("Started", result.started_at.isoformat()),

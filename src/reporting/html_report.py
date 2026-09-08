@@ -63,6 +63,7 @@ def _summary_section(result: TestRunResult) -> str:
       <table class="meta">
         <tr><th>Run ID</th><td>{_e(result.run_id)}</td></tr>
         <tr><th>Target (DUT)</th><td>{_e(result.target_ip)} — expected stack profile: <strong>{_e(result.target_stack)}</strong></td></tr>
+        <tr><th>Suite role</th><td>{_e(result.role_description)}</td></tr>
         <tr><th>Suite host</th><td>{_e(result.host_platform)}</td></tr>
         <tr><th>Payload mode</th><td>{_e(result.payload_mode)}</td></tr>
         <tr><th>Started</th><td>{_e(result.started_at.isoformat())}</td></tr>

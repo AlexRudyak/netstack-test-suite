@@ -71,12 +71,37 @@ class TestRunResult:
     target_stack: str  # target_profiles name active for this run ("linux" | "windows")
     host_platform: str  # platform.system() of the machine that executed the suite
     payload_mode: str = "random"
+    role: str = "client"  # which side the suite played ("client" | "server")
+    # Set when target_ip was one leg of a proxy DUT ("front" | "back") rather
+    # than an endpoint — without it a report reads as if a plain host was
+    # tested, and the reader can't tell which of the proxy's two stacks the
+    # findings belong to.
+    proxy_leg: str | None = None
     tests: list[TestEvent] = field(default_factory=list)
     packet_events: list[PacketEvent] = field(default_factory=list)
     # pytest's process exit code (0=all passed, 1=some failed, 2-5=collection/
     # usage/internal error, None while still running). Distinguishes "0 tests
     # ran because a collection error aborted the run" from "0 tests selected".
     pytest_returncode: int | None = None
+
+    @property
+    def role_description(self) -> str:
+        """How the run was positioned, in the terms a developer fixing the
+        DUT needs: which side the suite played, and — for a proxy — which of
+        the DUT's two stacks the findings belong to."""
+        if self.proxy_leg == "front":
+            return (
+                "client — probing the FRONT leg of a proxy DUT: the stack it serves "
+                "its own clients with"
+            )
+        if self.proxy_leg == "back":
+            return (
+                "server — observing the BACK leg of a proxy DUT: the stack it dials "
+                "origin servers with (traffic induced through the front)"
+            )
+        if self.role == "server":
+            return "server — the suite responded; the DUT initiated (validates its client path)"
+        return "client — the suite initiated (validates the DUT's responder)"
 
     @property
     def errored(self) -> bool:
@@ -115,6 +140,8 @@ class TestRunResult:
             "target_stack": self.target_stack,
             "host_platform": self.host_platform,
             "payload_mode": self.payload_mode,
+            "role": self.role,
+            "proxy_leg": self.proxy_leg,
             "pytest_returncode": self.pytest_returncode,
             "tests": [t.to_dict() for t in self.tests],
             "packet_events": [p.to_dict() for p in self.packet_events],
@@ -130,6 +157,8 @@ class TestRunResult:
             target_stack=data["target_stack"],
             host_platform=data["host_platform"],
             payload_mode=data.get("payload_mode", "random"),
+            role=data.get("role", "client"),
+            proxy_leg=data.get("proxy_leg"),
             pytest_returncode=data.get("pytest_returncode"),
             tests=[
                 TestEvent(

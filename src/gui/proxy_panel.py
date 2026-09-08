@@ -36,7 +36,11 @@ class ProxyBackendPanel(QWidget):
 
         self._listen_host = QLineEdit("0.0.0.0")
         self._listen_port = QSpinBox()
-        self._listen_port.setRange(1, 65535)
+        # 0 means "let the OS pick a free port" — handy when the DUT is
+        # configured to discover the origin, and it avoids needing a
+        # privileged (<1024) port. The bound port is shown once started.
+        self._listen_port.setRange(0, 65535)
+        self._listen_port.setSpecialValueText("auto (ephemeral)")
         self._listen_port.setValue(9099)
         self._enable_udp = QCheckBox("Also echo UDP on the same port")
 

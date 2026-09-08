@@ -197,11 +197,13 @@ def test_proxy_backend_panel_starts_and_stops(qtbot) -> None:
     qtbot.addWidget(panel)
 
     panel._listen_host.setText("127.0.0.1")
-    panel._listen_port.setValue(0 if panel._listen_port.minimum() == 0 else panel._listen_port.minimum())
+    # 0 = ephemeral: avoids a privileged (<1024) port, which a non-root CI
+    # user cannot bind on Linux, and avoids colliding with a busy fixed port.
+    panel._listen_port.setValue(0)
     panel._start()
     try:
         assert panel._backend is not None, "backend did not start"
-        assert panel._backend.bound_port > 0
+        assert panel._backend.bound_port > 0, "ephemeral port was not resolved"
     finally:
         panel._stop()
     assert panel._backend is None

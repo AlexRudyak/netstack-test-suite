@@ -36,6 +36,7 @@ markers = [
     "state_machine: TCP state transition tests (FIN, RST, simultaneous open/close)",
     "congestion: TCP congestion control / flow control tests",
     "icmp: ICMP (RFC 792) layer tests",
+    "proxy: Proxy-DUT tests; need a second app instance running `proxy-serve` as the backend",
     "vuln: Tests that send intentionally malformed or attack-pattern traffic at the DUT",
     "slow: Long-running tests (floods, timing-sensitive tests)",
     "internal: Self-validation tests for the framework itself (no DUT/interface required)",

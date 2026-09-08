@@ -15,16 +15,25 @@ from pathlib import Path
 
 import click
 
+from src.catalog import CATALOG
 from src.config import DUTConfig, Role, random_ephemeral_port
 from src.custom_packet.builder import CustomPacketSpec
 from src.custom_packet.sender import send_custom_packet
 from src.packet_engine.payloads import PayloadMode, from_file, from_hex, from_text
 from src.packet_engine.preflight import run_preflight
 from src.packet_engine.recorder import PacketRecorder, build_host_filter
+from src.proxy.backend import EchoBackend
+from src.proxy.config import ProxyMode
 from src.reporting.html_report import generate_html_report
 from src.reporting.pdf_report import generate_pdf_report
 from src.runner import RunRequest, run_tests
 from src.utils.logging_config import configure_logging
+
+
+# Derived from the catalog (which tests_internal AST-checks against the real
+# test tree), so a new test module can't leave the CLI rejecting it.
+TEST_MODULES = sorted({spec.module for spec in CATALOG})
+TEST_SUBMODULES = sorted({spec.submodule for spec in CATALOG if spec.submodule})
 
 
 @click.group()
@@ -34,8 +43,8 @@ def cli() -> None:
 
 
 @cli.command()
-@click.option("--module", type=click.Choice(["ip", "udp", "tcp"]), default=None)
-@click.option("--submodule", type=click.Choice(["syn", "state_machine", "congestion"]), default=None)
+@click.option("--module", type=click.Choice(TEST_MODULES), default=None)
+@click.option("--submodule", type=click.Choice(TEST_SUBMODULES), default=None)
 @click.option("--test", "test_name", default=None, help="Substring match against test node IDs (-k).")
 @click.option("--marker", "markers", multiple=True, help="Extra pytest marker expression term(s).")
 @click.option("--iface", required=True, help="Local Ethernet interface facing the DUT.")
@@ -71,6 +80,16 @@ def cli() -> None:
     default=False,
     help="Write a tshark-style per-packet debug log to reports/<run_id>/debug.log.",
 )
+@click.option(
+    "--proxy-mode",
+    type=click.Choice([m.value for m in ProxyMode]),
+    default=None,
+    help="Enable the proxy-DUT tests. Needs a backend instance (`netstack-cli proxy-serve`).",
+)
+@click.option("--proxy-host", default=None, help="Proxy DUT front address (explicit modes).")
+@click.option("--proxy-port", type=int, default=None, help="Proxy DUT front port (explicit modes).")
+@click.option("--backend-host", default=None, help="Origin address the DUT must reach (backend instance).")
+@click.option("--backend-port", type=int, default=9099, help="Backend instance listen port.")
 @click.option("--report", type=click.Choice(["pdf", "html", "none"]), default="pdf")
 @click.option(
     "--skip-preflight",
@@ -95,6 +114,11 @@ def run(
     allowed_targets: tuple[str, ...],
     confirm_vuln_tests: bool,
     debug: bool,
+    proxy_mode: str | None,
+    proxy_host: str | None,
+    proxy_port: int | None,
+    backend_host: str | None,
+    backend_port: int,
     report: str,
     skip_preflight: bool,
 ) -> None:
@@ -141,6 +165,11 @@ def run(
         confirm_vuln_tests=confirm_vuln_tests,
         debug=debug,
         role=Role(role),
+        proxy_mode=proxy_mode,
+        proxy_host=proxy_host,
+        proxy_port=proxy_port,
+        backend_host=backend_host,
+        backend_port=backend_port,
     )
 
     def on_test_event(event) -> None:
@@ -325,6 +354,50 @@ def record(
     finally:
         written = recorder.stop()
         click.echo(f"Wrote {written} packet(s) to {output_path}")
+
+
+@cli.command("proxy-serve")
+@click.option("--listen-host", default="0.0.0.0", help="Address to listen on (the origin the DUT dials).")
+@click.option("--listen-port", type=int, default=9099, help="Port to listen on.")
+@click.option("--udp/--no-udp", default=False, help="Also run a UDP echo responder on the same port.")
+def proxy_serve(listen_host: str, listen_port: int, udp: bool) -> None:
+    """Run the backend (origin) instance for proxy-DUT testing.
+
+    This is the **server instance** of the two-instance proxy setup: it
+    stands in as the origin server that the proxy DUT dials out to, and
+    echoes everything the proxy relays. The client instance then verifies
+    the round-trip, which proves both of the DUT's legs work.
+
+    Start this first, then run the proxy tests from the other instance:
+
+      netstack-cli proxy-serve --listen-host 0.0.0.0 --listen-port 9099
+
+      netstack-cli run --module proxy --iface eth0 --dut-ip 10.0.0.5 \\
+        --target-stack linux --proxy-mode socks5 \\
+        --proxy-host 10.0.0.5 --proxy-port 1080 \\
+        --backend-host 10.0.0.9 --backend-port 9099
+
+    Runs until Ctrl+C. No elevated privileges required — this side uses
+    ordinary sockets, because the DUT terminates TCP on this leg.
+    """
+    backend = EchoBackend(listen_host, listen_port, enable_udp=udp, on_event=click.echo)
+    backend.start()
+    click.echo("Waiting for the proxy DUT to connect. Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        click.echo("\nStopping…")
+    finally:
+        stats = backend.stats
+        backend.stop()
+        click.echo(stats.summary())
+        if not stats.tcp_connections and not stats.udp_datagrams:
+            click.echo(
+                "No connections were received — the DUT never dialled this backend. "
+                "Check the proxy's upstream/origin configuration and routing.",
+                err=True,
+            )
 
 
 if __name__ == "__main__":

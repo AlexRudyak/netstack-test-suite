@@ -9,6 +9,7 @@ that runs with no DUT at all, see [`../tests_internal/`](../tests_internal/READM
 | [`udp/`](udp/README.md) | RFC 768 UDP layer: header fields, checksum (incl. zero-checksum), port-unreachable, payload robustness, echo server |
 | [`icmp/`](icmp/README.md) | RFC 792 ICMP: echo/reply (client + server), malformed robustness |
 | [`tcp/`](tcp/README.md) | RFC 9293 TCP layer, split into `syn/`, `state_machine/`, `congestion/` |
+| [`proxy/`](proxy/README.md) | Proxy-DUT relay conformance — **needs two app instances** (RFC 9293, 9110/9112, 1928) |
 
 ## Roles (client / server)
 
@@ -91,9 +92,13 @@ once in the session-scoped `dut_config` fixture),
 
 ## Markers
 
-`ip`, `udp`, `tcp`, `icmp`, `syn`, `state_machine`, `congestion`, `vuln`,
-`slow`, `client`, `server`, `internal` (registered in
+`ip`, `udp`, `tcp`, `icmp`, `proxy`, `syn`, `state_machine`, `congestion`,
+`vuln`, `slow`, `client`, `server`, `internal` (registered in
 [`pyproject.toml`](../pyproject.toml)).
+
+`proxy`-marked tests are opt-in: they skip unless `--proxy-mode` is given
+and a second instance is running the backend — see
+[`docs/proxy_testing.md`](../docs/proxy_testing.md).
 
 Per-test descriptions and RFC mappings live in the machine-readable
 catalog ([`src/catalog.py`](../src/catalog.py)), which drives the GUI's

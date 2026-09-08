@@ -18,6 +18,7 @@ privileges *except* the moment a socket is actually opened
 | [`reporting/`](reporting/README.md) | Canonical result models, JSON/PDF/HTML reports, live event log | ✔ |
 | [`plotting/`](plotting/README.md) | Live pyqtgraph plot + static matplotlib charts for the PDF | ✔ |
 | [`custom_packet/`](custom_packet/README.md) | Ad-hoc single-packet craft/send (the `send` command / GUI panel) | ✔ |
+| [`proxy/`](proxy/README.md) | Proxy-DUT testing: echo backend, tunnel handshakes (CONNECT/SOCKS5), relay client | ✔ |
 | [`utils/`](utils/README.md) | Privileges, vuln-test safety gate, debug log, logging config | ✔ |
 | [`cli/`](cli/README.md) | `netstack-cli` — `run` / `send` / `record` | ✔ |
 | [`gui/`](gui/README.md) | `netstack-gui` — PySide6 desktop app | ✔ |

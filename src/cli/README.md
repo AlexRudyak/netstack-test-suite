@@ -6,6 +6,8 @@ The command-line front end. A thin wrapper: `run` drives
 [`packet_engine/recorder.py`](../packet_engine/README.md#recorderpy).
 Nothing here is logic the GUI can't reach through the same modules.
 
+Commands: `run`, `send`, `record`, `proxy-serve`.
+
 Entry point: `cli` (a Click group). Installed as `netstack-cli`
 (`pyproject.toml [project.scripts]`). Run any command with `--help`.
 
@@ -96,3 +98,27 @@ netstack-cli record --iface eth0 --out capture.pcap --filter "tcp port 80" --dur
 | `run(...)` | Builds a `RunRequest`, streams results (echoing each test outcome), generates the report, exits with pass/fail status. |
 | `send(...)` | Resolves the payload, builds a `CustomPacketSpec`, sends, prints the reply summary. |
 | `record(...)` | Builds a `PacketRecorder`, runs bounded (join) or until Ctrl+C, prints the packet count written. |
+
+## `proxy-serve` — backend (origin) instance for proxy testing
+
+Runs the **server instance** of a two-instance proxy test: stands in as the
+origin the proxy DUT dials out to, echoing whatever it relays. Start this
+first, then run the `proxy` module from the other instance.
+
+| Option | Default | Notes |
+|---|---|---|
+| `--listen-host TEXT` | `0.0.0.0` | address the DUT forwards to |
+| `--listen-port INT` | `9099` | |
+| `--udp / --no-udp` | off | also echo UDP on the same port |
+
+```bash
+netstack-cli proxy-serve --listen-host 0.0.0.0 --listen-port 9099
+```
+
+Runs until Ctrl+C and prints connection/byte counters — a connection
+appearing here is direct evidence the DUT's *client* leg dialled out. No
+elevated privileges needed (ordinary sockets; the DUT terminates TCP here).
+
+`run` additionally accepts `--proxy-mode {transparent,http-connect,socks5}`,
+`--proxy-host/--proxy-port` (DUT front) and `--backend-host/--backend-port`
+to enable the proxy tests. See [`docs/proxy_testing.md`](../../docs/proxy_testing.md).

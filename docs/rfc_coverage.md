@@ -40,6 +40,12 @@
 | RFC 1122 | §4.2.2.17 persist timer | `tests/tcp/congestion/test_zero_window.py::test_zero_window_persist_probe_from_dut` | `server`, `slow` |
 | RFC 6298 | retransmission timer | `tests/tcp/congestion/test_retransmission_timeout.py` | `slow` |
 | RFC 5681 | slow start | `tests/tcp/congestion/test_slow_start.py` | **skipped placeholder** — see module docstring |
+| RFC 9293 | §3.5, §3.7 proxy relay fidelity | `tests/proxy/test_proxy_relay.py` | `proxy`, two instances |
+| RFC 9293 | §3.6 proxy half-close propagation | `tests/proxy/test_proxy_lifecycle.py` | `proxy`, two instances |
+| RFC 9110 | §9.3.6 CONNECT tunnel | `tests/proxy/test_proxy_http_connect.py` | `proxy`, `--proxy-mode=http-connect` |
+| RFC 9112 | §3.2.3 authority-form target | `tests/proxy/test_proxy_http_connect.py` | `proxy` |
+| RFC 1928 | §3, §4, §6 SOCKS5 negotiation/CONNECT/reply | `tests/proxy/test_proxy_socks5.py` | `proxy`, `--proxy-mode=socks5` |
+| RFC 1929 | §2 SOCKS5 user/pass auth | `src/proxy/tunnel.py` (client path + unit tests) | implemented; no DUT-facing test yet |
 
 This is the representative sample scaffolded per module, not exhaustive
 coverage of any of these RFCs — each test file's own docstring and the

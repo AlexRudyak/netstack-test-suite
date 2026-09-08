@@ -37,6 +37,33 @@ collection time** (before any fixture — including the privileged
 guarantee). A test with no role marker defaults to client, so existing
 tests are unaffected.
 
+## Proxy DUTs: a two-instance topology
+
+An endpoint DUT is one peer; a **proxy** is a middlebox with two legs, and
+it plays a different role on each — server on the front, client on the
+back. Testing it therefore needs two app instances:
+
+```
+[client instance] --front--> [ PROXY DUT ] --back--> [backend instance]
+```
+
+The instances need no side channel: the client sends a unique payload, the
+backend (`proxy-serve`) echoes whatever the proxy delivers, and the client
+verifies the bytes returned. One successful round-trip proves the DUT
+accepted the front connection, dialled the origin, and relayed faithfully
+both ways.
+
+Unlike the rest of the suite, the proxy relay tests use **ordinary sockets**
+rather than raw L2 injection. That is deliberate: the DUT *terminates* TCP
+on both legs, so the useful checks are about what it does with the byte
+stream, and a raw stateful echo server would be fighting a real stack for
+no benefit. Packet-level conformance of the proxy's front stack is still
+covered — by pointing the existing endpoint suites at the front address.
+
+`proxy`-marked tests are opt-in: the collection hook skips them unless
+`--proxy-mode` is set, so they never fail an ordinary endpoint run. See
+[`proxy_testing.md`](proxy_testing.md).
+
 ## Per-test metadata catalog
 
 `src/catalog.py` is a machine-readable list of `TestSpec`s — each test's

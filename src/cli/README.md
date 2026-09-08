@@ -121,4 +121,24 @@ elevated privileges needed (ordinary sockets; the DUT terminates TCP here).
 
 `run` additionally accepts `--proxy-mode {transparent,http-connect,socks5}`,
 `--proxy-host/--proxy-port` (DUT front) and `--backend-host/--backend-port`
-to enable the proxy tests. See [`docs/proxy_testing.md`](../../docs/proxy_testing.md).
+to enable the proxy tests.
+
+### `--proxy-leg {front,back}` — run the *ordinary* suites against a proxy
+
+Aims the existing ip/icmp/udp/tcp tests at one leg of a proxy DUT. The leg
+implies the role (front ⇒ client, back ⇒ server), so it **overrides
+`--role`** rather than needing to be kept in sync with it.
+
+- `front` retargets to `--proxy-host`/`--proxy-port`; an unset `--dut-port`
+  falls back to the front port (a random one would only ever measure
+  closed-port behavior).
+- `back` requires `--proxy-mode` and `--backend-host` — the run has to
+  induce traffic through the front to make the proxy dial out at all, and
+  refuses to start without them.
+
+```bash
+netstack-cli run --iface eth0 --dut-ip 10.0.0.5 --target-stack linux \
+  --proxy-leg front --proxy-host 10.0.0.5 --proxy-port 1080
+```
+
+See [`docs/proxy_testing.md`](../../docs/proxy_testing.md).

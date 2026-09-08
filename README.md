@@ -28,7 +28,7 @@ run summary with report export along the bottom.*
 - **CLI and GUI**, both driving the same subprocess-based orchestration layer (`src/runner.py`) — never diverging in how a run is invoked.
 - **Runs against a Linux- or Windows-based DUT**, selected explicitly (`--target-stack`), independent of whichever OS the suite itself runs on. See [`docs/architecture.md`](docs/architecture.md).
 - **Client or server role** (`--role`) — the suite can initiate (validating the DUT's responder) or respond while the DUT initiates (validating the DUT's client path).
-- **Proxy-DUT testing** — run two instances (client + backend) to validate a relaying DUT's *server* and *client* legs end-to-end: transparent, HTTP CONNECT (RFC 9110/9112) or SOCKS5 (RFC 1928).
+- **Proxy-DUT testing** — run two instances (client + backend) to validate a relaying DUT's *server* and *client* legs end-to-end: transparent, HTTP CONNECT (RFC 9110/9112) or SOCKS5 (RFC 1928). `--proxy-leg {front,back}` additionally aims the **whole existing IP/ICMP/UDP/TCP suite** at either of the proxy's own stacks, inducing traffic through the front so the back leg has something to observe.
 - **Per-test catalog** — every test carries a description, RFC clause, and roles, surfaced in the GUI and the report appendix.
 - **Addressable DUT target** — interface, target IP/MAC, target stack, and optional ports (`--dut-port` / `--dut-source-port`, or the GUI's DUT configuration form): leave the destination port unset and one random ephemeral port is chosen for the whole session; set it and every port-specific test uses exactly that.
 - **Custom/raw L7 payloads** — zeros, ones, random, or user-supplied text/hex/file — usable by the automated suite and via an ad-hoc Custom Packet sender.

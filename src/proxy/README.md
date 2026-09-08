@@ -14,14 +14,18 @@ other stands in as the origin. See
 | `tunnel.py` | RFC-exact HTTP CONNECT and SOCKS5 wire formats (pure functions) |
 | `backend.py` | `EchoBackend` — the *server instance*: echoes what the proxy relays |
 | `client.py` | `ProxyClient` — the *client instance*: dials through the DUT and relays |
+| `inducer.py` | `TrafficInducer` — keeps a proxy's back leg busy so the server-role suites have outbound connections to observe |
 
 ## Why ordinary sockets
 
 The DUT terminates TCP on both legs, so a raw-scapy stateful echo server
 would be fighting a real stack for no benefit. Here the goal is to be a
-*correct peer* (RFC 9293) and check what comes back. Packet-level
-conformance of the proxy's front stack is still covered — by pointing the
-existing [`tests/tcp`](../../tests/tcp/README.md) suite at the front address.
+*correct peer* (RFC 9293) and check what comes back.
+
+Packet-level conformance of the proxy's *own* stacks is covered separately,
+by `--proxy-leg`: it aims the ordinary [`tests/`](../../tests/README.md)
+suites at the proxy's front (probing it as a server) or back (observing it
+as a client). See [`docs/proxy_testing.md`](../../docs/proxy_testing.md).
 
 ## config.py
 
@@ -62,3 +66,22 @@ half-close it mirrors the shutdown so a conformant proxy propagates it
 `ProxyTunnelError` carries the DUT's own refusal text (HTTP status, or the
 RFC 1928 `REP` message). `TunnelDetails` exposes the negotiated fields so
 tests can assert on RFC specifics rather than just success.
+
+## inducer.py
+
+`TrafficInducer(config, *, interval=0.25, payload=b"netstack-induce")` —
+a background thread that repeatedly opens connections through the proxy.
+
+It exists for one asymmetry: the server-role tests wait for the DUT to
+initiate. An endpoint DUT does that by itself; a **proxy only dials its
+origin while a client is driving its front**. So a `--proxy-leg back` run
+starts an inducer for the session (autouse fixture in
+[`tests/conftest.py`](../../tests/conftest.py)) and the proxy keeps opening
+outbound connections for those tests to observe.
+
+`start()`/`stop()` or use it as a context manager. Failures are **counted,
+not raised** — a proxy refusing or an unreachable origin is a DUT result
+that the test's own assertions should report, not an inducer error.
+`attempts`, `successes`, `last_error` and `summary()` make that visible:
+`induced 0/40 connections through the proxy` tells you at a glance that
+every server-role failure in the run shares one root cause.

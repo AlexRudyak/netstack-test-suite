@@ -83,19 +83,84 @@ here, so they never fail a normal endpoint run.
 | HTTP CONNECT | 2xx establishes tunnel; no `Content-Length`/`Transfer-Encoding` on 2xx; unreachable origin is not 2xx | RFC 9110 §9.3.6, RFC 9112 §3.2.3 |
 | SOCKS5 | greeting/method selection, CONNECT reply `REP=0x00`, only offered methods selected, failure codes for a closed origin | RFC 1928 §3, §4, §6 |
 
-## Also test the front leg at packet level
+## 3. Run *all* the other tests against the proxy too — `--proxy-leg`
 
-The relay tests use real sockets, because the DUT *terminates* TCP on both
-legs. To additionally validate the proxy's front TCP stack at the packet
-level, point the ordinary endpoint suites at the proxy's front address —
-they need no proxy-specific options:
+The relay tests above use real sockets, because the DUT *terminates* TCP on
+both legs, so they say nothing about how it builds and parses packets. The
+ordinary IP/ICMP/UDP/TCP suites do exactly that — and a proxy has two stacks
+that both deserve them.
+
+`--proxy-leg` points the whole existing suite at one side of the proxy:
+
+| Leg | The proxy is… | Suite runs as | Aimed at |
+|---|---|---|---|
+| `front` | a **server** | client (initiates) | the proxy's client-facing address |
+| `back` | a **client** | server (responds) | the proxy's origin-facing address |
+
+The leg determines the role — you probe a front as a client and observe a
+back as a server — so it **overrides `--role`** rather than making you keep
+the two in sync.
+
+### Front leg — probe the proxy's client-facing stack
+
+Retargets automatically to `--proxy-host`/`--proxy-port`, so `--dut-ip` can
+stay pointed at whatever you normally use:
 
 ```bash
-netstack-cli run --module tcp --iface eth0 --dut-ip <proxy-front-ip> --target-stack linux
+netstack-cli run --iface eth0 --dut-ip 10.0.0.5 --target-stack linux \
+  --proxy-leg front --proxy-host 10.0.0.5 --proxy-port 1080
 ```
 
-That reuses the existing SYN/handshake, invalid-flag, options and
-state-machine tests against the proxy's server side.
+Every client-role test now applies: TTL expiry, IP options, header and
+checksum validation, the three-way handshake, TCP options and MSS, invalid
+flag combinations, RST handling, zero-window behavior, retransmission
+timing, and the vuln-marked SYN-flood/land probes.
+
+Note the port: on the front leg the default "random ephemeral port" would
+only ever measure *closed*-port behavior, so an unset `--dut-port` falls
+back to the proxy's front port, which is the one you know is open.
+
+### Back leg — observe the stack it dials origins with
+
+Aim `--dut-ip` at the proxy's origin-facing address:
+
+```bash
+netstack-cli run --iface eth1 --dut-ip 198.51.100.4 --target-stack linux \
+  --proxy-leg back \
+  --proxy-mode socks5 --proxy-host 10.0.0.5 --proxy-port 1080 \
+  --backend-host 198.51.100.9 --backend-port 9099
+```
+
+There is a catch that front-leg runs don't have: **a proxy's back leg is
+idle unless something is driving its front.** The server-role tests wait for
+the DUT to initiate — an endpoint does that on its own, a proxy does not. So
+a back-leg run starts a background *traffic inducer* for the session
+(`src/proxy/inducer.py`), which keeps opening connections through the front
+so the proxy keeps dialling out. That is why the back leg requires
+`--proxy-mode` and `--backend-host`, and why the run refuses to start
+without them — otherwise every test would simply time out with no
+explanation. At the end of the run the inducer reports what it managed:
+
+```
+[proxy-leg back] induced 42/42 connections through the proxy
+```
+
+If that says `0/…`, nothing reached the origin and every server-role
+failure in the run has the same root cause.
+
+In the GUI, set **Proxy leg** in the DUT configuration group (with **Proxy
+front**/**Proxy backend** filled in) and run any part of the test tree.
+
+### Which suites are meaningful on which leg
+
+| Suite | Front leg | Back leg |
+|---|---|---|
+| `ip` (TTL, options, header/checksum validation) | yes — the proxy answers as a server | partly: only what it emits outbound is observable |
+| `icmp` (echo, unreachable, TTL exceeded) | yes | yes, when the DUT's origin-side stack sources ICMP |
+| `udp` | only if the DUT proxies UDP | only if the DUT proxies UDP |
+| `tcp/syn`, `tcp/state_machine` | yes — its listener is exercised directly | yes — its outbound handshakes are observed |
+| `tcp/congestion` (window, retransmit) | yes | yes |
+| `proxy` (relay/tunnel) | run with `--proxy-mode`, not a leg | same |
 
 ## Not yet covered
 

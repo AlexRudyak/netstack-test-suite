@@ -368,6 +368,92 @@ CATALOG: list[TestSpec] = [
         "stalling. Requires the DUT to have data queued to send.",
         "RFC 1122 §4.2.2.17", SERVER, ("tcp", "congestion", "slow"),
     ),
+    # ---- Proxy DUT (two-instance: client here, backend elsewhere) ---------
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relays_payload_round_trip",
+        "Relay round-trip (both DUT legs)",
+        "Sends a unique payload through the proxy to the backend instance and verifies the echo "
+        "returns identical. Proves the DUT accepted the front connection (its server side), "
+        "dialled the origin (its client side), and relayed faithfully both ways.",
+        "RFC 9293 §3.5, §3.7", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relay_is_eight_bit_clean",
+        "Octet-transparent relay",
+        "Relays every octet 0x00-0xFF plus embedded CRLF and a fake CONNECT line, verifying the "
+        "proxy forwards blindly instead of scanning or rewriting an established tunnel.",
+        "RFC 9110 §9.3.6 (blind forwarding)", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relays_payload_larger_than_one_segment",
+        "Multi-segment payload relay",
+        "Relays a 128 KiB payload, exercising the DUT's buffering and segmentation across both "
+        "legs; the byte stream must arrive intact and in order.",
+        "RFC 9293 §3.7", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relays_successive_exchanges_on_one_connection",
+        "Successive exchanges on one connection",
+        "Runs several request/response exchanges over a single relayed connection to confirm the "
+        "DUT does not desynchronise or interleave the stream.",
+        "RFC 9293 §3.7", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_lifecycle", "test_client_half_close_propagates_and_returns_eof",
+        "Half-close propagation",
+        "Half-closes the client side and verifies the FIN reaches the origin and the origin's "
+        "close is relayed back as a clean EOF — the proxy must bridge shutdown across both legs.",
+        "RFC 9293 §3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_lifecycle", "test_data_sent_before_close_is_fully_flushed",
+        "Flush before close",
+        "Writes a payload immediately before half-closing and verifies nothing is truncated — a "
+        "proxy that closes the origin leg without flushing silently loses data.",
+        "RFC 9293 §3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_http_connect", "test_connect_request_establishes_tunnel_with_2xx",
+        "CONNECT establishes tunnel",
+        "Sends an authority-form CONNECT and requires a 2xx response, then confirms the tunnel "
+        "actually carries data. Exercises the DUT's server-side HTTP proxy behaviour.",
+        "RFC 9110 §9.3.6, RFC 9112 §3.2.3", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_http_connect", "test_2xx_connect_response_omits_framing_headers",
+        "No framing headers on 2xx CONNECT",
+        "A 2xx response to CONNECT must not carry Content-Length or Transfer-Encoding — the "
+        "tunnel has no message body and framing headers would desynchronise the stream.",
+        "RFC 9110 §9.3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_http_connect", "test_connect_to_unreachable_origin_is_not_reported_as_success",
+        "Unreachable origin is not 2xx",
+        "Requests a tunnel to a closed origin port and verifies the proxy reports an error status "
+        "rather than falsely signalling an established tunnel.",
+        "RFC 9110 §9.3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_socks5", "test_socks5_negotiation_and_connect_succeed",
+        "SOCKS5 negotiate + CONNECT",
+        "Runs the SOCKS5 greeting, method selection and CONNECT request, requiring REP=0x00, then "
+        "confirms the negotiated tunnel relays data.",
+        "RFC 1928 §3, §4, §6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_socks5", "test_socks5_never_selects_an_unoffered_method",
+        "SOCKS5 selects an offered method",
+        "The server must choose one of the methods the client offered (or 0xFF); selecting an "
+        "unoffered method is non-conformant.",
+        "RFC 1928 §3", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_socks5", "test_socks5_connect_to_closed_origin_returns_failure_reply",
+        "SOCKS5 failure reply for closed origin",
+        "CONNECT to an origin that is not listening must be answered with a non-zero REP drawn "
+        "from the RFC-defined codes, never reported as success.",
+        "RFC 1928 §6", CLIENT, ("proxy",),
+    ),
 ]
 
 

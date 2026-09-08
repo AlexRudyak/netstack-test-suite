@@ -61,6 +61,34 @@ def test_run_command_builds_expected_request(monkeypatch, stub_result) -> None:
     assert request.config.target_stack == "linux"
 
 
+def test_module_choices_cover_every_catalogued_module() -> None:
+    """--module must accept every module that actually has tests, or the CLI
+    silently can't run them (this regressed once when icmp/proxy were added)."""
+    from src.catalog import CATALOG
+
+    assert set(cli_main.TEST_MODULES) == {spec.module for spec in CATALOG}
+    for expected in ("ip", "udp", "tcp", "icmp", "proxy"):
+        assert expected in cli_main.TEST_MODULES
+
+
+def test_run_accepts_each_module(monkeypatch, stub_result) -> None:
+    def fake_run_tests(request, on_test_event=None):
+        return stub_result
+
+    monkeypatch.setattr(cli_main, "run_tests", fake_run_tests)
+    runner = CliRunner()
+    for module in cli_main.TEST_MODULES:
+        result = runner.invoke(
+            cli_main.cli,
+            [
+                "run", "--module", module,
+                "--iface", "eth0", "--dut-ip", "10.0.0.5", "--target-stack", "linux",
+                "--report", "none", "--skip-preflight",
+            ],
+        )
+        assert result.exit_code == 0, f"--module {module} rejected: {result.output}"
+
+
 def test_run_command_requires_dut_ip() -> None:
     runner = CliRunner()
     result = runner.invoke(cli_main.cli, ["run", "--iface", "eth0", "--target-stack", "linux"])

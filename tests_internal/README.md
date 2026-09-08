@@ -16,6 +16,8 @@ network interface, require elevated privileges, or need `--target-stack`/
 | `test_recorder.py` | `src/packet_engine/recorder.py` — BPF filter, incremental writing, start/stop lifecycle, via monkeypatched AsyncSniffer/PcapWriter |
 | `test_preflight.py` | `src/packet_engine/preflight.py` — config validation, privilege blocker, ARP reply/no-reply/send-error outcomes |
 | `test_responder.py` | `src/packet_engine/responder.py` — server-role reply builders + serve_* orchestration via a fake interface |
+| `test_proxy_tunnel.py` | `src/proxy/tunnel.py` — RFC 1928/1929 and RFC 9110/9112 wire formats, byte-exact |
+| `test_proxy_relay.py` | `src/proxy/` end-to-end via an in-process stub proxy: relay fidelity, binary safety, half-close |
 | `test_catalog.py` | `src/catalog.py` — metadata completeness + AST drift check (every test cataloged, every entry real) |
 | `test_debug_log.py` | `src/utils/debug_log.py` — tshark-style formatting, frame numbering, caller resolution, NetworkInterface integration |
 | `test_runner_args.py` | `src/runner.py` — `build_pytest_args` (the shared CLI/GUI subprocess command), incl. `--debug` wiring |

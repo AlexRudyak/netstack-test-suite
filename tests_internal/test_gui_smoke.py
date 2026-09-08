@@ -189,6 +189,48 @@ def test_blank_destination_port_yields_one_stable_random_port(qtbot) -> None:
     assert window._current_dut_config().target_port == 4444
 
 
+def test_proxy_backend_panel_starts_and_stops(qtbot) -> None:
+    """The GUI can act as the backend (server) instance of a proxy test."""
+    from src.gui.proxy_panel import ProxyBackendPanel
+
+    panel = ProxyBackendPanel()
+    qtbot.addWidget(panel)
+
+    panel._listen_host.setText("127.0.0.1")
+    panel._listen_port.setValue(0 if panel._listen_port.minimum() == 0 else panel._listen_port.minimum())
+    panel._start()
+    try:
+        assert panel._backend is not None, "backend did not start"
+        assert panel._backend.bound_port > 0
+    finally:
+        panel._stop()
+    assert panel._backend is None
+
+
+def test_proxy_mode_selection_feeds_run_request(qtbot, monkeypatch) -> None:
+    """Proxy topology entered in the GUI reaches the RunRequest."""
+    import src.gui.main_window as main_window
+    from src.packet_engine.preflight import PreflightResult
+
+    monkeypatch.setattr(main_window, "run_preflight", lambda config: PreflightResult(ok=True, info=["ok"]))
+
+    window = main_window.MainWindow()
+    qtbot.addWidget(window)
+    window._target_ip.setText("10.0.0.5")
+    window._proxy_mode.setCurrentText("socks5")
+    window._proxy_front.setText("10.0.0.5:1080")
+    window._proxy_backend.setText("10.0.0.9:9099")
+
+    captured = {}
+    monkeypatch.setattr(window._controller, "start", lambda request: captured.update(request=request))
+    window._on_run_clicked()
+
+    request = captured["request"]
+    assert request.proxy_mode == "socks5"
+    assert (request.proxy_host, request.proxy_port) == ("10.0.0.5", 1080)
+    assert (request.backend_host, request.backend_port) == ("10.0.0.9", 9099)
+
+
 def test_failed_preflight_blocks_run_and_reports(qtbot, monkeypatch) -> None:
     """The reported bug: a run that can't proceed must report to the user
     and not silently start. A failing preflight blocks controller.start

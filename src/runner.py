@@ -99,6 +99,9 @@ class RunRequest:
     proxy_port: int | None = None
     backend_host: str | None = None
     backend_port: int | None = None
+    # Aims the ORDINARY endpoint suites at one leg of a proxy DUT
+    # ("front"/"back"). It determines the role, so it overrides `role`.
+    proxy_leg: str | None = None
 
 
 TestEventCallback = Callable[[TestEvent], None]
@@ -165,6 +168,12 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
         args.append(f"--debug-log={run_dir / 'debug.log'}")
     if request.proxy_mode:
         args.append(f"--proxy-mode={request.proxy_mode}")
+    if request.proxy_leg:
+        args.append(f"--proxy-leg={request.proxy_leg}")
+    # The topology addresses are emitted whenever they're set, not only for
+    # --proxy-mode: a front-leg run needs --proxy-host/--proxy-port to know
+    # what to retarget to, even with no proxy-marked tests selected.
+    if request.proxy_mode or request.proxy_leg:
         if request.proxy_host:
             args.append(f"--proxy-host={request.proxy_host}")
         if request.proxy_port:
@@ -216,6 +225,8 @@ def stream_run(
         target_stack=request.config.target_stack,
         host_platform=platform.system(),
         payload_mode=request.payload_mode.value,
+        role=request.role.value,
+        proxy_leg=request.proxy_leg,
     )
 
     args = build_pytest_args(request, run_dir)

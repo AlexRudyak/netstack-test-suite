@@ -16,7 +16,7 @@ from pathlib import Path
 import click
 
 from src.catalog import CATALOG
-from src.config import DUTConfig, Role, random_ephemeral_port
+from src.config import DUTConfig, ProxyLeg, Role, random_ephemeral_port
 from src.custom_packet.builder import CustomPacketSpec
 from src.custom_packet.sender import send_custom_packet
 from src.packet_engine.payloads import PayloadMode, from_file, from_hex, from_text
@@ -86,6 +86,15 @@ def cli() -> None:
     default=None,
     help="Enable the proxy-DUT tests. Needs a backend instance (`netstack-cli proxy-serve`).",
 )
+@click.option(
+    "--proxy-leg",
+    type=click.Choice([leg.value for leg in ProxyLeg]),
+    default=None,
+    help="Aim the ORDINARY suites (ip/udp/icmp/tcp) at one leg of a proxy DUT: "
+    "'front' probes its client-facing stack (implies --role client, retargets to "
+    "--proxy-host/--proxy-port); 'back' observes the stack it dials origins with "
+    "(implies --role server, needs --proxy-mode + --backend-host so traffic can be induced).",
+)
 @click.option("--proxy-host", default=None, help="Proxy DUT front address (explicit modes).")
 @click.option("--proxy-port", type=int, default=None, help="Proxy DUT front port (explicit modes).")
 @click.option("--backend-host", default=None, help="Origin address the DUT must reach (backend instance).")
@@ -115,6 +124,7 @@ def run(
     confirm_vuln_tests: bool,
     debug: bool,
     proxy_mode: str | None,
+    proxy_leg: str | None,
     proxy_host: str | None,
     proxy_port: int | None,
     backend_host: str | None,
@@ -129,6 +139,25 @@ def run(
       netstack-cli run --module tcp --submodule syn --iface eth0 --dut-ip 10.0.0.5 --target-stack windows
       netstack-cli run --test test_three_way_handshake --iface eth0 --dut-ip 10.0.0.5 --target-stack linux
     """
+    leg = ProxyLeg(proxy_leg) if proxy_leg else None
+    if leg is not None:
+        # The leg says which side of the proxy we're on, and therefore which
+        # side the suite plays; keeping a separate --role in sync would only
+        # be a way to get it wrong.
+        role = leg.implied_role.value
+        click.echo(f"Proxy leg '{leg.value}' selected — running as {role}.")
+    if leg is ProxyLeg.FRONT:
+        # Probe the proxy's client-facing stack: that's a different address
+        # and a port we know is open.
+        dut_ip = proxy_host or dut_ip
+        if dut_port is None:
+            dut_port = proxy_port
+    if leg is ProxyLeg.BACK and not (proxy_mode and backend_host):
+        raise click.UsageError(
+            "--proxy-leg back needs --proxy-mode and --backend-host: a proxy's back leg is "
+            "idle unless traffic is driven through its front, so the run has to induce it."
+        )
+
     # No --dut-port ⇒ pick one random ephemeral port and use it for the run.
     if dut_port is None:
         dut_port = random_ephemeral_port()
@@ -143,6 +172,7 @@ def run(
         source_port=dut_source_port,
         allowed_targets=tuple(allowed_targets),
         role=Role(role),
+        proxy_leg=leg,
     )
 
     if not skip_preflight:
@@ -166,6 +196,7 @@ def run(
         debug=debug,
         role=Role(role),
         proxy_mode=proxy_mode,
+        proxy_leg=proxy_leg,
         proxy_host=proxy_host,
         proxy_port=proxy_port,
         backend_host=backend_host,

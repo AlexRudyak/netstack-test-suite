@@ -233,6 +233,57 @@ def test_proxy_mode_selection_feeds_run_request(qtbot, monkeypatch) -> None:
     assert (request.backend_host, request.backend_port) == ("10.0.0.9", 9099)
 
 
+def test_proxy_front_leg_retargets_and_forces_client_role(qtbot, monkeypatch) -> None:
+    """Choosing the front leg points the ORDINARY suites at the proxy's
+    client-facing address and runs them as client — overriding the Role
+    selector, which can only be wrong once a leg is chosen."""
+    import src.gui.main_window as main_window
+    from src.config import ProxyLeg, Role
+    from src.packet_engine.preflight import PreflightResult
+
+    monkeypatch.setattr(main_window, "run_preflight", lambda config: PreflightResult(ok=True, info=["ok"]))
+
+    window = main_window.MainWindow()
+    qtbot.addWidget(window)
+    window._target_ip.setText("10.0.0.5")
+    window._proxy_front.setText("192.0.2.7:1080")
+    window._role.setCurrentText("server")  # deliberately contradictory
+    window._proxy_leg.setCurrentText("front")
+
+    captured = {}
+    monkeypatch.setattr(window._controller, "start", lambda request: captured.update(request=request))
+    window._on_run_clicked()
+
+    request = captured["request"]
+    assert request.proxy_leg == "front"
+    assert request.config.target_ip == "192.0.2.7"
+    assert request.config.target_port == 1080
+    assert request.config.role is Role.CLIENT
+    assert request.config.proxy_leg is ProxyLeg.FRONT
+
+
+def test_proxy_back_leg_without_a_topology_is_refused(qtbot, monkeypatch) -> None:
+    """The back leg is idle unless traffic is driven through the front, so
+    a back-leg run with no proxy mode/backend must say so instead of
+    producing a run where every server-role test times out."""
+    import src.gui.main_window as main_window
+    from src.packet_engine.preflight import PreflightResult
+
+    monkeypatch.setattr(main_window, "run_preflight", lambda config: PreflightResult(ok=True, info=["ok"]))
+
+    window = main_window.MainWindow()
+    qtbot.addWidget(window)
+    window._target_ip.setText("10.0.0.5")
+    window._proxy_leg.setCurrentText("back")
+
+    started = {"called": False}
+    monkeypatch.setattr(window._controller, "start", lambda request: started.__setitem__("called", True))
+    window._on_run_clicked()
+
+    assert started["called"] is False
+    assert "back" in window._log_panel.toPlainText()
+
+
 def test_failed_preflight_blocks_run_and_reports(qtbot, monkeypatch) -> None:
     """The reported bug: a run that can't proceed must report to the user
     and not silently start. A failing preflight blocks controller.start

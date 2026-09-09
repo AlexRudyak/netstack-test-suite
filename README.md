@@ -38,14 +38,24 @@ run summary with report export along the bottom.*
 
 ## Download
 
-The easiest way to run on Windows is the standalone executable from the
+Standalone builds (no Python needed on the target) are on the
 [**Releases**](../../releases) page:
 
-1. Download `NetstackTestSuite.exe` from the latest release.
-2. Double-click it — it self-elevates via UAC (raw sockets need Administrator).
+**Windows** — `NetstackTestSuite-windows-x64.exe`
+
+1. Download it from the latest release.
+2. Double-click — it self-elevates via UAC (raw sockets need Administrator).
 3. Install [Npcap](https://npcap.com) if you haven't (the driver can't be bundled).
 
-No Python needed on the target. See [`packaging/README.md`](packaging/README.md).
+**Linux** — `NetstackTestSuite-linux-x86_64`
+
+1. Download it, then `chmod +x NetstackTestSuite-linux-x86_64`.
+2. Raw sockets need privilege: run with `sudo`, or once grant the
+   capability with `sudo setcap cap_net_raw,cap_net_admin+eip ./NetstackTestSuite-linux-x86_64`.
+3. Needs a desktop session plus the Qt libs `libegl1 libgl1 libxkbcommon0 libdbus-1-3`.
+
+See [`packaging/README.md`](packaging/README.md). Both are built by the
+[`Release`](.github/workflows/release.yml) workflow on a version-tag push.
 
 ## Quickstart (from source)
 

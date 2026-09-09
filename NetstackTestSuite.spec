@@ -1,16 +1,24 @@
-# PyInstaller spec — builds NetstackTestSuite.exe (single-file, UAC admin).
+# PyInstaller spec — builds the single-file NetstackTestSuite app.
 #
 # Build:  python -m PyInstaller NetstackTestSuite.spec --noconfirm
-# Output: dist/NetstackTestSuite.exe
+# Output: dist/NetstackTestSuite.exe   (Windows)
+#         dist/NetstackTestSuite       (Linux — a self-contained ELF binary)
 #
-# The exe is BOTH the GUI and the pytest worker: the runner re-invokes it
-# with a sentinel arg to run tests (a frozen exe has no `python -m pytest`),
+# One spec, both platforms: the only differences are Windows-only options
+# (the UAC admin manifest), guarded by sys.platform below. On Linux there
+# is no UAC — raw sockets need root, or grant the binary the capability once
+# with:  sudo setcap cap_net_raw,cap_net_admin+eip ./NetstackTestSuite
+#
+# The app is BOTH the GUI and the pytest worker: the runner re-invokes it
+# with a sentinel arg to run tests (a frozen build has no `python -m pytest`),
 # so pytest, its plugins, and the tests/ tree must all be bundled.
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 project_root = os.path.abspath(".")
+is_windows = sys.platform == "win32"
 
 # The suite runs pytest against these on disk, and the GUI reads tests/ to
 # populate the tree — bundle them as data at the extraction root.
@@ -48,18 +56,23 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+exe_kwargs = dict(
+    name="NetstackTestSuite",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,  # windowed GUI (no console)
+    disable_windowed_traceback=False,
+)
+if is_windows:
+    exe_kwargs["uac_admin"] = True  # request Administrator via UAC on launch
+
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
     a.datas,
     [],
-    name="NetstackTestSuite",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=False,        # windowed GUI (no console)
-    uac_admin=True,       # request Administrator via UAC on launch
-    disable_windowed_traceback=False,
+    **exe_kwargs,
 )

@@ -28,6 +28,7 @@ run summary with report export along the bottom.*
 - **CLI and GUI**, both driving the same subprocess-based orchestration layer (`src/runner.py`) — never diverging in how a run is invoked.
 - **Runs against a Linux- or Windows-based DUT**, selected explicitly (`--target-stack`), independent of whichever OS the suite itself runs on. See [`docs/architecture.md`](docs/architecture.md).
 - **Client or server role** (`--role`) — the suite can initiate (validating the DUT's responder) or respond while the DUT initiates (validating the DUT's client path).
+- **Proxy-DUT testing** — run two instances (client + backend) to validate a relaying DUT's *server* and *client* legs end-to-end: transparent, HTTP CONNECT (RFC 9110/9112) or SOCKS5 (RFC 1928). `--proxy-leg {front,back}` additionally aims the **whole existing IP/ICMP/UDP/TCP suite** at either of the proxy's own stacks, inducing traffic through the front so the back leg has something to observe.
 - **Per-test catalog** — every test carries a description, RFC clause, and roles, surfaced in the GUI and the report appendix.
 - **Addressable DUT target** — interface, target IP/MAC, target stack, and optional ports (`--dut-port` / `--dut-source-port`, or the GUI's DUT configuration form): leave the destination port unset and one random ephemeral port is chosen for the whole session; set it and every port-specific test uses exactly that.
 - **Custom/raw L7 payloads** — zeros, ones, random, or user-supplied text/hex/file — usable by the automated suite and via an ad-hoc Custom Packet sender.
@@ -37,14 +38,24 @@ run summary with report export along the bottom.*
 
 ## Download
 
-The easiest way to run on Windows is the standalone executable from the
+Standalone builds (no Python needed on the target) are on the
 [**Releases**](../../releases) page:
 
-1. Download `NetstackTestSuite.exe` from the latest release.
-2. Double-click it — it self-elevates via UAC (raw sockets need Administrator).
+**Windows** — `NetstackTestSuite-windows-x64.exe`
+
+1. Download it from the latest release.
+2. Double-click — it self-elevates via UAC (raw sockets need Administrator).
 3. Install [Npcap](https://npcap.com) if you haven't (the driver can't be bundled).
 
-No Python needed on the target. See [`packaging/README.md`](packaging/README.md).
+**Linux** — `NetstackTestSuite-linux-x86_64`
+
+1. Download it, then `chmod +x NetstackTestSuite-linux-x86_64`.
+2. Raw sockets need privilege: run with `sudo`, or once grant the
+   capability with `sudo setcap cap_net_raw,cap_net_admin+eip ./NetstackTestSuite-linux-x86_64`.
+3. Needs a desktop session plus the Qt libs `libegl1 libgl1 libxkbcommon0 libdbus-1-3`.
+
+See [`packaging/README.md`](packaging/README.md). Both are built by the
+[`Release`](.github/workflows/release.yml) workflow on a version-tag push.
 
 ## Quickstart (from source)
 
@@ -77,11 +88,12 @@ src/                  Core framework
   reporting/          Result models + developer PDF/HTML reports
   plotting/           Live plot + static charts
   custom_packet/      Ad-hoc craft & send
+  proxy/              Proxy-DUT testing: echo backend, CONNECT/SOCKS5, relay client
   cli/  gui/          netstack-cli and netstack-gui front ends
   utils/              Privileges, safety gate, debug log, paths
   catalog.py          Per-test metadata (description, RFC, roles)
   runner.py           Subprocess-based run orchestration
-tests/                DUT-facing suite: ip/ udp/ icmp/ tcp/{syn,state_machine,congestion}/
+tests/                DUT-facing suite: ip/ udp/ icmp/ tcp/{syn,state_machine,congestion}/ proxy/
 tests_internal/       Framework self-validation — no DUT required
 docs/                 Architecture, setup, RFC coverage matrix
 packaging/            PyInstaller spec entry, build script, Inno Setup installer
@@ -98,6 +110,7 @@ Start at [`src/README.md`](src/README.md) — the module map. Per-package docs:
 [`reporting`](src/reporting/README.md) ·
 [`plotting`](src/plotting/README.md) ·
 [`custom_packet`](src/custom_packet/README.md) ·
+[`proxy`](src/proxy/README.md) ·
 [`utils`](src/utils/README.md) ·
 [`cli`](src/cli/README.md) ·
 [`gui`](src/gui/README.md)
@@ -121,6 +134,7 @@ actually did:
 - [`docs/getting_started.md`](docs/getting_started.md) — install and privilege setup
 - [`docs/rfc_coverage.md`](docs/rfc_coverage.md) — RFC clause → test file matrix
 - [`docs/screenshots.md`](docs/screenshots.md) — every UI element, in one place
+- [`docs/proxy_testing.md`](docs/proxy_testing.md) — testing a **proxy DUT** with two instances
 
 ## Development
 

@@ -53,7 +53,7 @@ what it checks, and what the DUT actually did.*
 | `PacketEvent` | `timestamp`, `direction`, `summary`, `size_bytes`, `test_nodeid`. `.to_dict()`. |
 | `TestOutcome` | `Enum`: `PASSED` / `FAILED` / `SKIPPED` / `ERROR`. |
 | `TestEvent` | `nodeid`, `outcome`, `duration_s`, `markers`, `message`. `.to_dict()`. |
-| `TestRunResult` | The whole run: `run_id`, timestamps, `target_ip`, `target_stack`, `host_platform`, `payload_mode`, `pytest_returncode`, `tests`, `packet_events`. |
+| `TestRunResult` | The whole run: `run_id`, timestamps, `target_ip`, `target_stack`, `host_platform`, `payload_mode`, `role`, `proxy_leg`, `pytest_returncode`, `tests`, `packet_events`. |
 
 `TestRunResult` members:
 
@@ -61,6 +61,7 @@ what it checks, and what the DUT actually did.*
 |---|---|---|
 | `.passed` / `.failed` / `.total` | properties `-> int` | Test counts. |
 | `.errored` | property `-> bool` | True when `pytest_returncode >= 2` — pytest itself failed to run the tests (collection/usage error, no tests), distinct from a test assertion failure. |
+| `.role_description` | property `-> str` | How the run was positioned, in the terms a developer fixing the DUT needs: which side the suite played and, for a proxy DUT, which of its two stacks (`proxy_leg` front/back) the findings belong to. Rendered as **Suite role** in both reports. |
 | `.to_dict` | `() -> dict` | JSON-ready. |
 | `.from_dict` | `classmethod (dict) -> TestRunResult` | Inverse — round-trips through `results.json`. |
 

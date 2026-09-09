@@ -323,6 +323,132 @@ CATALOG: list[TestSpec] = [
         "acceptance enables off-path reset attacks.",
         "RFC 5961 §3 (also RFC 9293 §3.10.7.1)", CLIENT, ("tcp", "state_machine"),
     ),
+    TestSpec(
+        "tcp", "state_machine", "test_established_segment_validation", "test_in_window_data_is_cumulatively_acknowledged",
+        "In-window data → cumulative ACK",
+        "Delivers valid in-window data on an ESTABLISHED connection and verifies the DUT's ACK "
+        "advances to SEG.SEQ + SEG.LEN — the cumulative-acknowledgement rule.",
+        "RFC 9293 §3.10.7.4, §3.8", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_established_segment_validation", "test_old_duplicate_data_is_acked_not_reset",
+        "Old duplicate segment → ACK, not RST",
+        "Sends a segment wholly to the left of RCV.NXT (already-received data) and verifies the "
+        "DUT drops it with an ACK rather than resetting — the normal retransmission-crossing-ACK case.",
+        "RFC 9293 §3.10.7.4 (step 1)", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_established_segment_validation", "test_future_out_of_window_data_does_not_break_connection",
+        "Future out-of-window data dropped",
+        "Sends data beyond the right window edge and verifies the DUT neither delivers it nor "
+        "resets — its ACK must still report the real RCV.NXT, not the bogus sequence.",
+        "RFC 9293 §3.10.7.4 (step 1)", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_established_segment_validation", "test_segment_with_ack_bit_off_is_silently_dropped",
+        "ACK bit off → silent drop",
+        "Sends a data segment with the ACK flag clear on an ESTABLISHED connection and verifies "
+        "the DUT drops it silently (no RST, connection intact), per the §3.10.7.4 ACK check.",
+        "RFC 9293 §3.10.7.4 (step 4)", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_established_segment_validation", "test_ack_for_unsent_data_does_not_reset",
+        "ACK for unsent data → ACK, not RST",
+        "Sends a segment acknowledging data the DUT never sent (SEG.ACK > SND.NXT) and verifies "
+        "the DUT answers with an ACK and drops it — a blind attacker must not reset this way.",
+        "RFC 5961 §5", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_established_segment_validation", "test_keepalive_probe_is_answered_with_current_ack",
+        "Keep-alive probe answered",
+        "Sends a keep-alive probe (SEG.SEQ = SND.NXT-1, no data) and verifies the DUT answers "
+        "with an ACK for RCV.NXT without treating the already-ACKed byte as new data.",
+        "RFC 1122 §4.2.3.6", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_challenge_ack", "test_in_window_non_exact_rst_draws_challenge_ack_only",
+        "In-window non-exact RST → challenge ACK",
+        "Sends a RST inside the receive window but not exactly at RCV.NXT and verifies the DUT "
+        "does not tear the connection down — RFC 5961 requires a challenge ACK instead.",
+        "RFC 5961 §3", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_challenge_ack", "test_in_window_syn_draws_challenge_ack_not_reset",
+        "In-window SYN → challenge ACK",
+        "Sends a SYN on an ESTABLISHED connection and verifies the DUT does not silently reset "
+        "it — a DUT that answers with RST is vulnerable to a blind-SYN reset.",
+        "RFC 5961 §4", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_challenge_ack", "test_exact_rcv_nxt_syn_is_still_not_a_reset_trigger",
+        "Exact-RCV.NXT SYN is not a reset trigger",
+        "Sends a SYN whose sequence number is exactly RCV.NXT and verifies the DUT still only "
+        "challenges rather than tearing down without a challenge-ACK confirmation.",
+        "RFC 5961 §4", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_challenge_ack", "test_ack_arriving_on_listen_port_elicits_rst",
+        "Bare ACK in LISTEN → RST",
+        "Sends a bare ACK to a listening port (no connection) and verifies the DUT answers with "
+        "<SEQ=SEG.ACK><CTL=RST>, per the LISTEN-state first check.",
+        "RFC 9293 §3.10.7.3", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_challenge_ack", "test_data_segment_to_listen_port_is_not_accepted",
+        "Data segment in LISTEN not accepted",
+        "Sends a segment with neither SYN nor ACK to a listening port and verifies it never "
+        "produces a SYN-ACK — the DUT must not accept data as a connection request.",
+        "RFC 9293 §3.10.7.3", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_syn_received_state", "test_duplicate_syn_in_syn_received_retransmits_same_syn_ack",
+        "Duplicate SYN in SYN-RECEIVED",
+        "Retransmits an identical SYN while the DUT is in SYN-RECEIVED and verifies it resends "
+        "the same SYN-ACK with the same ISN — a new ISN would break the real client's handshake.",
+        "RFC 9293 §3.10.7.4", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_syn_received_state", "test_rst_in_syn_received_aborts_half_open_connection",
+        "RST in SYN-RECEIVED aborts half-open",
+        "Sends a RST at RCV.NXT while the DUT is in SYN-RECEIVED and verifies the TCB is deleted "
+        "— the aborted handshake's final ACK afterwards is answered with RST.",
+        "RFC 9293 §3.10.7.4 (SYN-RECEIVED, RST check)", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_syn_received_state", "test_wrong_seq_ack_does_not_complete_handshake",
+        "Wrong final-ACK ack number rejected",
+        "Sends the handshake's final ACK with an ack number that does not acknowledge the DUT's "
+        "ISN and verifies the connection does not reach ESTABLISHED (RST, no data carried).",
+        "RFC 9293 §3.10.7.4 (SYN-RECEIVED, ACK check)", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_fin_close_transitions", "test_out_of_window_fin_is_not_processed",
+        "Out-of-window FIN not processed",
+        "Sends a FIN whose sequence number is outside the receive window and verifies the DUT "
+        "does not acknowledge the phantom FIN's sequence or move to CLOSE-WAIT on it.",
+        "RFC 9293 §3.10.7.4 (step 1)", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_fin_close_transitions", "test_retransmitted_fin_is_reacknowledged",
+        "Retransmitted FIN re-acknowledged",
+        "After the DUT ACKs our FIN, retransmits the identical FIN and verifies it is ACKed "
+        "again (FIN.SEQ+1) rather than drawing a RST — ACK-of-FIN is idempotent.",
+        "RFC 9293 §3.6", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_fin_close_transitions", "test_data_after_our_fin_is_dropped_not_reset",
+        "Data after our FIN dropped",
+        "Sends data past FIN.SEQ+1 (bytes outside our sequence space) after our FIN and verifies "
+        "the DUT drops it with an ACK rather than resetting the connection.",
+        "RFC 9293 §3.10.7.4", CLIENT, ("tcp", "state_machine"),
+    ),
+    TestSpec(
+        "tcp", "state_machine", "test_fin_close_transitions", "test_close_wait_still_answers_bare_ack",
+        "CLOSE-WAIT still answers bare ACK",
+        "After our FIN moves the DUT to CLOSE-WAIT, sends a bare in-window ACK and verifies the "
+        "DUT does not reset — CLOSE-WAIT is a fully open half-connection.",
+        "RFC 9293 §3.6", CLIENT, ("tcp", "state_machine"),
+    ),
     # ---- TCP / congestion -------------------------------------------------
     TestSpec(
         "tcp", "congestion", "test_window_scaling", "test_syn_ack_window_matches_target_stack_profile",
@@ -367,6 +493,92 @@ CATALOG: list[TestSpec] = [
         "DUT with data to send must emit a zero-window (persist) probe rather than flooding or "
         "stalling. Requires the DUT to have data queued to send.",
         "RFC 1122 §4.2.2.17", SERVER, ("tcp", "congestion", "slow"),
+    ),
+    # ---- Proxy DUT (two-instance: client here, backend elsewhere) ---------
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relays_payload_round_trip",
+        "Relay round-trip (both DUT legs)",
+        "Sends a unique payload through the proxy to the backend instance and verifies the echo "
+        "returns identical. Proves the DUT accepted the front connection (its server side), "
+        "dialled the origin (its client side), and relayed faithfully both ways.",
+        "RFC 9293 §3.5, §3.7", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relay_is_eight_bit_clean",
+        "Octet-transparent relay",
+        "Relays every octet 0x00-0xFF plus embedded CRLF and a fake CONNECT line, verifying the "
+        "proxy forwards blindly instead of scanning or rewriting an established tunnel.",
+        "RFC 9110 §9.3.6 (blind forwarding)", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relays_payload_larger_than_one_segment",
+        "Multi-segment payload relay",
+        "Relays a 128 KiB payload, exercising the DUT's buffering and segmentation across both "
+        "legs; the byte stream must arrive intact and in order.",
+        "RFC 9293 §3.7", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_relay", "test_proxy_relays_successive_exchanges_on_one_connection",
+        "Successive exchanges on one connection",
+        "Runs several request/response exchanges over a single relayed connection to confirm the "
+        "DUT does not desynchronise or interleave the stream.",
+        "RFC 9293 §3.7", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_lifecycle", "test_client_half_close_propagates_and_returns_eof",
+        "Half-close propagation",
+        "Half-closes the client side and verifies the FIN reaches the origin and the origin's "
+        "close is relayed back as a clean EOF — the proxy must bridge shutdown across both legs.",
+        "RFC 9293 §3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_lifecycle", "test_data_sent_before_close_is_fully_flushed",
+        "Flush before close",
+        "Writes a payload immediately before half-closing and verifies nothing is truncated — a "
+        "proxy that closes the origin leg without flushing silently loses data.",
+        "RFC 9293 §3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_http_connect", "test_connect_request_establishes_tunnel_with_2xx",
+        "CONNECT establishes tunnel",
+        "Sends an authority-form CONNECT and requires a 2xx response, then confirms the tunnel "
+        "actually carries data. Exercises the DUT's server-side HTTP proxy behaviour.",
+        "RFC 9110 §9.3.6, RFC 9112 §3.2.3", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_http_connect", "test_2xx_connect_response_omits_framing_headers",
+        "No framing headers on 2xx CONNECT",
+        "A 2xx response to CONNECT must not carry Content-Length or Transfer-Encoding — the "
+        "tunnel has no message body and framing headers would desynchronise the stream.",
+        "RFC 9110 §9.3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_http_connect", "test_connect_to_unreachable_origin_is_not_reported_as_success",
+        "Unreachable origin is not 2xx",
+        "Requests a tunnel to a closed origin port and verifies the proxy reports an error status "
+        "rather than falsely signalling an established tunnel.",
+        "RFC 9110 §9.3.6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_socks5", "test_socks5_negotiation_and_connect_succeed",
+        "SOCKS5 negotiate + CONNECT",
+        "Runs the SOCKS5 greeting, method selection and CONNECT request, requiring REP=0x00, then "
+        "confirms the negotiated tunnel relays data.",
+        "RFC 1928 §3, §4, §6", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_socks5", "test_socks5_never_selects_an_unoffered_method",
+        "SOCKS5 selects an offered method",
+        "The server must choose one of the methods the client offered (or 0xFF); selecting an "
+        "unoffered method is non-conformant.",
+        "RFC 1928 §3", CLIENT, ("proxy",),
+    ),
+    TestSpec(
+        "proxy", None, "test_proxy_socks5", "test_socks5_connect_to_closed_origin_returns_failure_reply",
+        "SOCKS5 failure reply for closed origin",
+        "CONNECT to an origin that is not listening must be answered with a non-zero REP drawn "
+        "from the RFC-defined codes, never reported as success.",
+        "RFC 1928 §6", CLIENT, ("proxy",),
     ),
 ]
 

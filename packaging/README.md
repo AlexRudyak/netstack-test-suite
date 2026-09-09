@@ -1,16 +1,25 @@
-# packaging — building the Windows executable
+# packaging — building the standalone executables
 
-Turns the app into a single, double-clickable Windows `.exe` that runs as
-Administrator (needed for raw sockets), with no Python install required on
-the target machine.
+Turns the app into a single, self-contained executable with no Python
+install required on the target machine — a double-clickable `.exe` on
+Windows (runs as Administrator, needed for raw sockets) and an equivalent
+ELF binary on Linux.
 
 ## Build
+
+One [`NetstackTestSuite.spec`](../NetstackTestSuite.spec) builds both — run
+it on the platform you want a binary for (PyInstaller is not a
+cross-compiler). The [`Release`](../.github/workflows/release.yml) workflow
+does exactly this on a Windows and an Ubuntu runner when a `v*` tag is
+pushed, and publishes both to the GitHub Release.
+
+Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-Or directly:
+Linux (or directly on either platform):
 
 ```bash
 python -m PyInstaller NetstackTestSuite.spec --noconfirm
@@ -20,14 +29,15 @@ Output:
 
 | File | What it is |
 |---|---|
-| `dist\NetstackTestSuite.exe` | The app. **Double-click to run** — it self-elevates via UAC. No install step needed. |
-| `dist\NetstackTestSuite-Setup.exe` | A proper installer (Start Menu + optional desktop shortcut), built **only if Inno Setup is installed** (see below). |
+| `dist/NetstackTestSuite.exe` | **Windows** app. **Double-click to run** — it self-elevates via UAC. No install step needed. |
+| `dist/NetstackTestSuite` | **Linux** binary. `chmod +x` then run. Raw sockets need root: run with `sudo`, or once grant the capability with `sudo setcap cap_net_raw,cap_net_admin+eip ./NetstackTestSuite`. Needs a desktop session and the Qt libs listed below. |
+| `dist\NetstackTestSuite-Setup.exe` | A proper Windows installer (Start Menu + optional desktop shortcut), built **only if Inno Setup is installed** (see below). |
 
 ## How it works
 
-The exe is **both the GUI and the pytest worker**. The app runs tests by
-launching a subprocess — but a frozen exe has no `python -m pytest`, so the
-runner re-invokes the exe itself with a sentinel argument
+The build is **both the GUI and the pytest worker**. The app runs tests by
+launching a subprocess — but a frozen build has no `python -m pytest`, so the
+runner re-invokes the executable itself with a sentinel argument
 (`--__run_pytest__`); [`src/gui/app.py`](../src/gui/app.py) routes that to
 `pytest.main()`. The `tests/` tree, `conftest.py`, `pyproject.toml`, and
 all of `src` (plus scapy, pytest, and the report-log plugin) are bundled
@@ -41,11 +51,24 @@ force-loads the report-log plugin with `-p pytest_reportlog.plugin`.
 
 ## Requirements on the target machine
 
+**Windows:**
+
 - **Npcap** (https://npcap.com) — the exe bundles scapy but *not* the Npcap
   driver, which raw packet capture needs. Install it with "Restrict …to
   Administrators only" **unchecked**. (Most machines that have run the app
   from source already have it.)
 - Nothing else — Python and all libraries are inside the exe.
+
+**Linux:**
+
+- **libpcap** (`libpcap0.8` — usually already present) for raw capture.
+- **Qt runtime libs** the bundled PySide6 needs: `libegl1 libgl1
+  libxkbcommon0 libdbus-1-3` (plus a running X11/Wayland session).
+- **Raw-socket privilege**: run with `sudo`, or grant the binary the
+  capability once: `sudo setcap cap_net_raw,cap_net_admin+eip ./NetstackTestSuite`.
+- Nothing else — Python and all libraries are inside the binary. There is
+  no UAC-style self-elevation on Linux; the preflight check explains the
+  privilege requirement if you launch it unprivileged.
 
 ## Building the installer (optional)
 

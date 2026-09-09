@@ -34,12 +34,26 @@
 | RFC 9293 | §3.6 FIN handling | `tests/tcp/state_machine/test_connection_termination.py` | |
 | RFC 9293 | §3.5.2, §3.10.7.1 RST handling | `tests/tcp/state_machine/test_rst_handling.py` | |
 | RFC 5961 | §3 out-of-window RST ignored | `tests/tcp/state_machine/test_rst_edge_cases.py::test_out_of_window_rst_is_ignored` | edge/security |
+| RFC 5961 | §3 in-window non-exact RST → challenge ACK | `tests/tcp/state_machine/test_challenge_ack.py::test_in_window_non_exact_rst_draws_challenge_ack_only` | edge/security |
+| RFC 5961 | §4 in-window SYN → challenge ACK | `tests/tcp/state_machine/test_challenge_ack.py` | edge/security |
+| RFC 5961 | §5 ACK for unsent data → ACK not RST | `tests/tcp/state_machine/test_established_segment_validation.py::test_ack_for_unsent_data_does_not_reset` | edge/security |
+| RFC 9293 | §3.10.7.3 LISTEN-state arrivals (bare ACK → RST, data dropped) | `tests/tcp/state_machine/test_challenge_ack.py` | edge |
+| RFC 9293 | §3.10.7.4 SYN-RECEIVED (dup SYN, RST, bad final ACK) | `tests/tcp/state_machine/test_syn_received_state.py` | edge |
+| RFC 9293 | §3.10.7.4 ESTABLISHED segment validation (seq/ACK checks) | `tests/tcp/state_machine/test_established_segment_validation.py` | edge |
+| RFC 1122 | §4.2.3.6 keep-alive probe | `tests/tcp/state_machine/test_established_segment_validation.py::test_keepalive_probe_is_answered_with_current_ack` | edge |
+| RFC 9293 | §3.6 FIN edge cases (out-of-window FIN, retransmit, CLOSE-WAIT) | `tests/tcp/state_machine/test_fin_close_transitions.py` | edge |
 | RFC 9293 | §3.5.3 simultaneous close | `tests/tcp/state_machine/test_simultaneous_open_close.py` | representative case only |
 | RFC 9293 | §3.7.1 flow control window | `tests/tcp/congestion/test_window_scaling.py` | informational, vs. `target_profile` |
 | RFC 9293 | §3.8.6 zero window | `tests/tcp/congestion/test_zero_window.py` | client + server |
 | RFC 1122 | §4.2.2.17 persist timer | `tests/tcp/congestion/test_zero_window.py::test_zero_window_persist_probe_from_dut` | `server`, `slow` |
 | RFC 6298 | retransmission timer | `tests/tcp/congestion/test_retransmission_timeout.py` | `slow` |
 | RFC 5681 | slow start | `tests/tcp/congestion/test_slow_start.py` | **skipped placeholder** — see module docstring |
+| RFC 9293 | §3.5, §3.7 proxy relay fidelity | `tests/proxy/test_proxy_relay.py` | `proxy`, two instances |
+| RFC 9293 | §3.6 proxy half-close propagation | `tests/proxy/test_proxy_lifecycle.py` | `proxy`, two instances |
+| RFC 9110 | §9.3.6 CONNECT tunnel | `tests/proxy/test_proxy_http_connect.py` | `proxy`, `--proxy-mode=http-connect` |
+| RFC 9112 | §3.2.3 authority-form target | `tests/proxy/test_proxy_http_connect.py` | `proxy` |
+| RFC 1928 | §3, §4, §6 SOCKS5 negotiation/CONNECT/reply | `tests/proxy/test_proxy_socks5.py` | `proxy`, `--proxy-mode=socks5` |
+| RFC 1929 | §2 SOCKS5 user/pass auth | `src/proxy/tunnel.py` (client path + unit tests) | implemented; no DUT-facing test yet |
 
 This is the representative sample scaffolded per module, not exhaustive
 coverage of any of these RFCs — each test file's own docstring and the

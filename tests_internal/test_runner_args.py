@@ -66,6 +66,30 @@ def test_no_selection_runs_whole_suite(tmp_path: Path) -> None:
     assert "tests" in args
 
 
+def test_proxy_topology_is_passed_through(tmp_path: Path) -> None:
+    """Proxy options must reach the subprocess, or the proxy tests skip."""
+    request = RunRequest(
+        config=_config(),
+        proxy_mode="socks5",
+        proxy_host="10.0.0.5",
+        proxy_port=1080,
+        backend_host="10.0.0.9",
+        backend_port=9099,
+    )
+    args = build_pytest_args(request, tmp_path)
+    assert "--proxy-mode=socks5" in args
+    assert "--proxy-host=10.0.0.5" in args
+    assert "--proxy-port=1080" in args
+    assert "--backend-host=10.0.0.9" in args
+    assert "--backend-port=9099" in args
+
+
+def test_proxy_options_omitted_when_mode_unset(tmp_path: Path) -> None:
+    args = build_pytest_args(RunRequest(config=_config()), tmp_path)
+    assert not any(a.startswith("--proxy-mode") for a in args)
+    assert not any(a.startswith("--backend-host") for a in args)
+
+
 def test_payload_and_target_stack_are_passed(tmp_path: Path) -> None:
     request = RunRequest(config=_config(), payload_mode=PayloadMode.ZEROS, payload_size=128)
     args = build_pytest_args(request, tmp_path)

@@ -19,11 +19,31 @@ from pathlib import Path
 
 import pytest
 
-from src.config import DUTConfig, Role, random_ephemeral_port
+from src.config import DUTConfig, ProxyLeg, Role, random_ephemeral_port
 from src.packet_engine.interface import NetworkInterface
 from src.packet_engine.payloads import PayloadMode
+from src.proxy.config import ProxyConfig, ProxyMode
 from src.reporting.collector import PacketEventLogWriter
 from src.target_profiles import TargetProfile, get_profile
+
+
+def selected_proxy_leg(config: pytest.Config) -> ProxyLeg | None:
+    value = config.getoption("--proxy-leg")
+    return ProxyLeg(value) if value else None
+
+
+def effective_role(config: pytest.Config) -> Role:
+    """The role the run actually plays.
+
+    Targeting a proxy leg determines the role unambiguously — you probe a
+    proxy's front as a client and observe its back as a server — so
+    --proxy-leg takes precedence over --role rather than making the
+    operator keep the two in sync.
+    """
+    leg = selected_proxy_leg(config)
+    if leg is not None:
+        return leg.implied_role
+    return Role(config.getoption("--role"))
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -35,11 +55,25 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     with neither defaults to client-only. `internal` tests (tests_internal/)
     are never role-filtered.
     """
-    role = config.getoption("--role")
+    role = effective_role(config).value
+    proxy_mode = config.getoption("--proxy-mode")
     skip_marker = pytest.mark.skip
     for item in items:
         if item.get_closest_marker("internal"):
             continue
+
+        # Proxy tests need a proxy topology (and a second app instance running
+        # `proxy-serve`), so they're opt-in: skipped unless --proxy-mode is set.
+        if item.get_closest_marker("proxy") is not None:
+            if not proxy_mode:
+                item.add_marker(
+                    skip_marker(
+                        reason="proxy: needs --proxy-mode and a backend instance "
+                        "(`netstack-cli proxy-serve`); see docs/proxy_testing.md"
+                    )
+                )
+            continue  # proxy tests are not role-filtered
+
         has_client = item.get_closest_marker("client") is not None
         has_server = item.get_closest_marker("server") is not None
         applicable = {"client"} if not (has_client or has_server) else set()
@@ -68,6 +102,31 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Which side the suite plays: client (initiator) or server (responder). "
         "Tests not marked for the selected role are skipped.",
     )
+    group.addoption(
+        "--proxy-mode",
+        choices=[m.value for m in ProxyMode],
+        default=None,
+        help="Enable the proxy-DUT tests and select how the client reaches the origin: "
+        "transparent (inline DUT), http-connect (RFC 9110/9112), socks5 (RFC 1928). "
+        "Requires a second app instance running `proxy-serve` as the backend.",
+    )
+    group.addoption(
+        "--proxy-leg",
+        choices=[leg.value for leg in ProxyLeg],
+        default=None,
+        help="Point the ORDINARY endpoint suites (ip/udp/icmp/tcp) at one leg of a proxy DUT: "
+        "'front' probes its client-facing stack (implies --role client, and retargets to "
+        "--proxy-host/--proxy-port); 'back' observes the stack it dials origins with "
+        "(implies --role server; set --dut-ip to the proxy's back-side address).",
+    )
+    group.addoption("--proxy-host", default=None, help="Proxy DUT front address (explicit modes).")
+    group.addoption("--proxy-port", type=int, default=None, help="Proxy DUT front port (explicit modes).")
+    group.addoption(
+        "--backend-host",
+        default=None,
+        help="Origin/backend address the DUT must reach — where the backend instance listens.",
+    )
+    group.addoption("--backend-port", type=int, default=9099, help="Backend instance listen port.")
     group.addoption("--dut-ip", default=None, help="DUT IP address.")
     group.addoption("--dut-iface", default=None, help="Local Ethernet interface facing the DUT.")
     group.addoption("--dut-mac", default=None, help="DUT MAC address.")
@@ -123,6 +182,14 @@ def dut_config(pytestconfig: pytest.Config) -> DUTConfig:
     target_ip = pytestconfig.getoption("--dut-ip")
     iface = pytestconfig.getoption("--dut-iface")
     target_stack = pytestconfig.getoption("--target-stack")
+    leg = selected_proxy_leg(pytestconfig)
+
+    # Front leg: the ordinary suites probe the proxy's client-facing stack,
+    # so retarget to its front address rather than making the operator pass
+    # the same host twice.
+    if leg is ProxyLeg.FRONT:
+        target_ip = pytestconfig.getoption("--proxy-host") or target_ip
+
     missing = [
         flag
         for flag, value in (
@@ -140,6 +207,10 @@ def dut_config(pytestconfig: pytest.Config) -> DUTConfig:
     # Unspecified destination port ⇒ one random ephemeral port for the whole
     # session (this fixture is session-scoped, so it's resolved exactly once).
     target_port = pytestconfig.getoption("--dut-port")
+    if leg is ProxyLeg.FRONT and target_port is None:
+        # The proxy's front port is the one port we *know* is open; a random
+        # ephemeral one would just measure closed-port behavior.
+        target_port = pytestconfig.getoption("--proxy-port")
     if target_port is None:
         target_port = random_ephemeral_port()
 
@@ -151,13 +222,40 @@ def dut_config(pytestconfig: pytest.Config) -> DUTConfig:
         target_port=target_port,
         source_port=pytestconfig.getoption("--dut-source-port"),
         allowed_targets=tuple(pytestconfig.getoption("--allowed-targets")),
-        role=Role(pytestconfig.getoption("--role")),
+        role=effective_role(pytestconfig),
+        proxy_leg=leg,
     )
 
 
 @pytest.fixture(scope="session")
 def selected_role(pytestconfig: pytest.Config) -> Role:
-    return Role(pytestconfig.getoption("--role"))
+    return effective_role(pytestconfig)
+
+
+@pytest.fixture(scope="session")
+def proxy_config(pytestconfig: pytest.Config) -> ProxyConfig:
+    """Topology for the proxy-DUT tests.
+
+    Only reached by `proxy`-marked tests, which the collection hook already
+    skips when --proxy-mode is absent.
+    """
+    mode = ProxyMode(pytestconfig.getoption("--proxy-mode"))
+    backend_host = pytestconfig.getoption("--backend-host")
+    if not backend_host:
+        pytest.fail(
+            "--backend-host is required for proxy tests: the origin address the DUT must "
+            "reach, i.e. where the backend instance (`netstack-cli proxy-serve`) listens."
+        )
+    try:
+        return ProxyConfig(
+            mode=mode,
+            backend_host=backend_host,
+            backend_port=pytestconfig.getoption("--backend-port"),
+            proxy_host=pytestconfig.getoption("--proxy-host"),
+            proxy_port=pytestconfig.getoption("--proxy-port"),
+        )
+    except ValueError as exc:
+        pytest.fail(str(exc))
 
 
 @pytest.fixture(scope="session")

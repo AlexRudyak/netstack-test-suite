@@ -55,7 +55,21 @@ def reports_dir() -> Path:
 # dict is polluted with the nodeid, filename, and module name, so we filter
 # to this known set rather than treating every keyword as a marker.
 KNOWN_MARKERS = frozenset(
-    {"ip", "udp", "tcp", "syn", "state_machine", "congestion", "vuln", "slow", "internal"}
+    {
+        "ip",
+        "udp",
+        "tcp",
+        "icmp",
+        "proxy",
+        "syn",
+        "state_machine",
+        "congestion",
+        "vuln",
+        "slow",
+        "internal",
+        "client",
+        "server",
+    }
 )
 
 
@@ -77,6 +91,17 @@ class RunRequest:
     confirm_vuln_tests: bool = False
     debug: bool = False  # write a tshark-style per-packet debug log for the run
     role: Role = Role.CLIENT  # which side the suite plays (client/server)
+    # Proxy-DUT topology. Setting proxy_mode enables the `proxy`-marked tests
+    # (they're skipped otherwise) and requires a backend instance running
+    # `netstack-cli proxy-serve` at backend_host:backend_port.
+    proxy_mode: str | None = None
+    proxy_host: str | None = None
+    proxy_port: int | None = None
+    backend_host: str | None = None
+    backend_port: int | None = None
+    # Aims the ORDINARY endpoint suites at one leg of a proxy DUT
+    # ("front"/"back"). It determines the role, so it overrides `role`.
+    proxy_leg: str | None = None
 
 
 TestEventCallback = Callable[[TestEvent], None]
@@ -141,6 +166,22 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
         args.append("--confirm-vuln-tests")
     if request.debug:
         args.append(f"--debug-log={run_dir / 'debug.log'}")
+    if request.proxy_mode:
+        args.append(f"--proxy-mode={request.proxy_mode}")
+    if request.proxy_leg:
+        args.append(f"--proxy-leg={request.proxy_leg}")
+    # The topology addresses are emitted whenever they're set, not only for
+    # --proxy-mode: a front-leg run needs --proxy-host/--proxy-port to know
+    # what to retarget to, even with no proxy-marked tests selected.
+    if request.proxy_mode or request.proxy_leg:
+        if request.proxy_host:
+            args.append(f"--proxy-host={request.proxy_host}")
+        if request.proxy_port:
+            args.append(f"--proxy-port={request.proxy_port}")
+        if request.backend_host:
+            args.append(f"--backend-host={request.backend_host}")
+        if request.backend_port:
+            args.append(f"--backend-port={request.backend_port}")
     return args
 
 
@@ -184,6 +225,8 @@ def stream_run(
         target_stack=request.config.target_stack,
         host_platform=platform.system(),
         payload_mode=request.payload_mode.value,
+        role=request.role.value,
+        proxy_leg=request.proxy_leg,
     )
 
     args = build_pytest_args(request, run_dir)

@@ -80,6 +80,35 @@ def test_html_report_has_developer_sections(tmp_path: Path) -> None:
     assert "capture.pcap" in html  # artifacts pointer
 
 
+def test_report_names_which_proxy_leg_the_findings_belong_to(tmp_path: Path) -> None:
+    """A proxy has two stacks. A report that only says "10.0.0.5" leaves the
+    developer guessing which one these findings are about."""
+    result = _result()
+    result.role = "server"
+    result.proxy_leg = "back"
+
+    assert "BACK leg" in result.role_description
+    html = generate_html_report(result, tmp_path / "r.html").read_text(encoding="utf-8")
+    assert "Suite role" in html
+    assert "BACK leg" in html
+
+
+def test_report_role_description_defaults_to_plain_endpoint_wording() -> None:
+    result = _result()
+    assert "client — the suite initiated" in result.role_description
+    result.role = "server"
+    assert "server — the suite responded" in result.role_description
+
+
+def test_run_result_round_trips_role_and_leg() -> None:
+    result = _result()
+    result.role = "server"
+    result.proxy_leg = "front"
+    restored = TestRunResult.from_dict(result.to_dict())
+    assert restored.role == "server"
+    assert restored.proxy_leg == "front"
+
+
 def test_pdf_report_still_valid_with_appendices(tmp_path: Path) -> None:
     out = generate_pdf_report(_result(), tmp_path / "r.pdf")
     data = out.read_bytes()

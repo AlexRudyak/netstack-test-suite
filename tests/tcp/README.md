@@ -3,7 +3,7 @@
 Split into three submodules by mechanic:
 
 - [`syn/`](syn/README.md) — connection establishment: standard handshake, SYN flood, ISN predictability, invalid flag combinations.
-- [`state_machine/`](state_machine/README.md) — connection termination and reset handling.
+- [`state_machine/`](state_machine/README.md) — connection termination, reset handling, RFC 5961 challenge-ACK behaviour, and the LISTEN / SYN-RECEIVED / ESTABLISHED / CLOSE-WAIT segment-arrival rules.
 - [`congestion/`](congestion/README.md) — window/flow control behavior.
 
 `conftest.py` provides `established_tcp_connection`, a fixture that

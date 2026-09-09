@@ -61,6 +61,95 @@ def test_run_command_builds_expected_request(monkeypatch, stub_result) -> None:
     assert request.config.target_stack == "linux"
 
 
+def test_module_choices_cover_every_catalogued_module() -> None:
+    """--module must accept every module that actually has tests, or the CLI
+    silently can't run them (this regressed once when icmp/proxy were added)."""
+    from src.catalog import CATALOG
+
+    assert set(cli_main.TEST_MODULES) == {spec.module for spec in CATALOG}
+    for expected in ("ip", "udp", "tcp", "icmp", "proxy"):
+        assert expected in cli_main.TEST_MODULES
+
+
+def test_run_accepts_each_module(monkeypatch, stub_result) -> None:
+    def fake_run_tests(request, on_test_event=None):
+        return stub_result
+
+    monkeypatch.setattr(cli_main, "run_tests", fake_run_tests)
+    runner = CliRunner()
+    for module in cli_main.TEST_MODULES:
+        result = runner.invoke(
+            cli_main.cli,
+            [
+                "run", "--module", module,
+                "--iface", "eth0", "--dut-ip", "10.0.0.5", "--target-stack", "linux",
+                "--report", "none", "--skip-preflight",
+            ],
+        )
+        assert result.exit_code == 0, f"--module {module} rejected: {result.output}"
+
+
+def test_proxy_front_leg_retargets_and_forces_client_role(monkeypatch, stub_result) -> None:
+    """`--proxy-leg front` aims the ordinary suites at the proxy's
+    client-facing address and runs them as client, whatever --role says."""
+    from src.config import ProxyLeg, Role
+
+    captured = {}
+
+    def fake_run_tests(request, on_test_event=None):
+        captured["request"] = request
+        return stub_result
+
+    monkeypatch.setattr(cli_main, "run_tests", fake_run_tests)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.cli,
+        [
+            "run",
+            "--iface", "eth0",
+            "--dut-ip", "10.0.0.5",
+            "--target-stack", "linux",
+            "--role", "server",            # deliberately contradictory
+            "--proxy-leg", "front",
+            "--proxy-host", "192.0.2.7",
+            "--proxy-port", "1080",
+            "--report", "none", "--skip-preflight",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    request = captured["request"]
+    assert request.proxy_leg == "front"
+    assert request.config.target_ip == "192.0.2.7"
+    assert request.config.target_port == 1080
+    assert request.config.role is Role.CLIENT
+    assert request.config.proxy_leg is ProxyLeg.FRONT
+
+
+def test_proxy_back_leg_without_a_topology_is_refused(monkeypatch) -> None:
+    """A back-leg run needs a way to induce traffic; without one every
+    server-role test would just time out, so the CLI refuses up front."""
+    def fake_run_tests(request, on_test_event=None):
+        raise AssertionError("run_tests should not be reached")
+
+    monkeypatch.setattr(cli_main, "run_tests", fake_run_tests)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_main.cli,
+        [
+            "run",
+            "--iface", "eth0", "--dut-ip", "10.0.0.5", "--target-stack", "linux",
+            "--proxy-leg", "back",
+            "--report", "none", "--skip-preflight",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--backend-host" in result.output
+
+
 def test_run_command_requires_dut_ip() -> None:
     runner = CliRunner()
     result = runner.invoke(cli_main.cli, ["run", "--iface", "eth0", "--target-stack", "linux"])

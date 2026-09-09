@@ -52,6 +52,8 @@ class RunController(QObject):
             target_stack=request.config.target_stack,
             host_platform=platform.system(),
             payload_mode=request.payload_mode.value,
+            role=request.role.value,
+            proxy_leg=request.proxy_leg,
         )
 
         args = build_pytest_args(request, run_dir)

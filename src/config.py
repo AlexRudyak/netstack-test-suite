@@ -48,6 +48,30 @@ class Role(Enum):
     SERVER = "server"
 
 
+class ProxyLeg(Enum):
+    """Which leg of a proxy DUT the ordinary endpoint suites point at.
+
+    A proxy has two stacks, and each is a legitimate target for the normal
+    IP/ICMP/UDP/TCP tests — they just probe it from opposite directions:
+
+    - FRONT: the client-facing side, where the proxy acts as a **server**.
+      The suite probes it exactly as it would any endpoint, so it implies
+      `Role.CLIENT`.
+    - BACK: the origin-facing side, where the proxy acts as a **client**.
+      The suite observes and responds to the connections the proxy dials
+      out, so it implies `Role.SERVER`. The proxy only dials out when
+      traffic flows through it, so back-leg runs need traffic induced
+      through the front (see `src/proxy/inducer.py`).
+    """
+
+    FRONT = "front"
+    BACK = "back"
+
+    @property
+    def implied_role(self) -> Role:
+        return Role.CLIENT if self is ProxyLeg.FRONT else Role.SERVER
+
+
 @dataclass(frozen=True)
 class DUTConfig:
     """Everything required to address the device under test."""
@@ -67,6 +91,11 @@ class DUTConfig:
     timeout: float = 2.0
     retries: int = 2
     role: Role = Role.CLIENT
+    # Set when the target is one leg of a proxy DUT rather than an endpoint.
+    # Purely descriptive here — the addressing is already resolved into
+    # target_ip/target_port — but carried so tests, logs and reports can say
+    # which side of the proxy a result refers to.
+    proxy_leg: ProxyLeg | None = None
 
     # CIDR ranges this run is authorized to send traffic to. Enforced by
     # src/utils/safety.py before any `vuln`-marked test executes.
@@ -95,6 +124,7 @@ class DUTConfig:
             retries=data.get("retries", 2),
             allowed_targets=tuple(data.get("allowed_targets", [])),
             role=Role(data.get("role", "client")),
+            proxy_leg=ProxyLeg(data["proxy_leg"]) if data.get("proxy_leg") else None,
         )
 
     def to_file(self, path: Path = DEFAULT_CONFIG_PATH) -> None:
@@ -112,6 +142,7 @@ class DUTConfig:
                     "retries": self.retries,
                     "allowed_targets": list(self.allowed_targets),
                     "role": self.role.value,
+                    "proxy_leg": self.proxy_leg.value if self.proxy_leg else None,
                 },
                 indent=2,
             ),

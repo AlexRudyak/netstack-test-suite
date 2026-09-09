@@ -21,14 +21,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.config import DUTConfig, Role, random_ephemeral_port
+from src.config import DUTConfig, ProxyLeg, Role, random_ephemeral_port
 from src.gui.custom_packet_panel import CustomPacketPanel
 from src.gui.log_panel import LogPanel
+from src.gui.proxy_panel import ProxyBackendPanel
 from src.gui.report_panel import ReportPanel
 from src.gui.run_controller import RunController
 from src.gui.test_details_panel import TestDetailsPanel
 from src.gui.test_tree_widget import TestTreeWidget
 from src.packet_engine.preflight import run_preflight
+from src.proxy.config import ProxyMode
 from src.plotting.metrics import MetricsBuffer
 from src.plotting.realtime_plotter import RealtimePlotWidget
 from src.reporting.models import PacketEvent, TestEvent, TestRunResult
@@ -63,6 +65,9 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._build_suite_tab(), "Automated Suite")
         tabs.addTab(CustomPacketPanel(), "Custom Packet")
+        # Run this instance as the backend/server side of a proxy-DUT test.
+        self._proxy_panel = ProxyBackendPanel()
+        tabs.addTab(self._proxy_panel, "Proxy Backend")
         root_layout.addWidget(tabs, stretch=1)
 
         self._report_panel = ReportPanel()
@@ -102,6 +107,32 @@ class MainWindow(QMainWindow):
         self._confirm_vuln = QCheckBox("I authorize vuln-marked tests against this target")
         self._debug = QCheckBox("Debug mode (write tshark-style per-packet debug.log)")
 
+        # Proxy-DUT topology (only used by the `proxy` test module; leave the
+        # mode off for ordinary endpoint testing).
+        self._proxy_mode = QComboBox()
+        self._proxy_mode.addItem("(off)", userData=None)
+        for mode in ProxyMode:
+            self._proxy_mode.addItem(mode.value, userData=mode.value)
+        self._proxy_mode.setToolTip(
+            "Enable the proxy test module. Requires a second instance running the "
+            "Proxy Backend tab (or `netstack-cli proxy-serve`)."
+        )
+        self._proxy_front = QLineEdit()
+        self._proxy_front.setPlaceholderText("proxy front host:port — e.g. 10.0.0.5:1080")
+        self._proxy_backend = QLineEdit()
+        self._proxy_backend.setPlaceholderText("backend host:port — e.g. 10.0.0.9:9099")
+        # Aims the ordinary ip/udp/icmp/tcp suites at one side of a proxy DUT.
+        self._proxy_leg = QComboBox()
+        self._proxy_leg.addItem("(endpoint — not a proxy)", userData=None)
+        for leg in ProxyLeg:
+            self._proxy_leg.addItem(leg.value, userData=leg.value)
+        self._proxy_leg.setToolTip(
+            "Run the ordinary IP/UDP/ICMP/TCP tests against a proxy DUT:\n"
+            "front — probe its client-facing stack (runs as client, retargets to Proxy front).\n"
+            "back — observe the stack it dials origins with (runs as server; needs a\n"
+            "proxy mode and backend so traffic can be induced through the front)."
+        )
+
         form.addRow("Interface", self._iface_combo)
         form.addRow("Target IP", self._target_ip)
         form.addRow("Target MAC (optional)", self._target_mac)
@@ -112,6 +143,10 @@ class MainWindow(QMainWindow):
         form.addRow("Allowed targets (CIDR)", self._allowed_targets)
         form.addRow(self._confirm_vuln)
         form.addRow(self._debug)
+        form.addRow("Proxy mode", self._proxy_mode)
+        form.addRow("Proxy front", self._proxy_front)
+        form.addRow("Proxy backend", self._proxy_backend)
+        form.addRow("Proxy leg (all tests)", self._proxy_leg)
         return box
 
     def _build_suite_tab(self) -> QWidget:
@@ -156,21 +191,44 @@ class MainWindow(QMainWindow):
             self._session_random_dst_port = random_ephemeral_port()
         return self._session_random_dst_port
 
+    def _selected_proxy_leg(self) -> ProxyLeg | None:
+        value = self._proxy_leg.currentData()
+        return ProxyLeg(value) if value else None
+
     def _current_dut_config(self) -> DUTConfig:
         allowed = tuple(x.strip() for x in self._allowed_targets.text().split(",") if x.strip())
+        leg = self._selected_proxy_leg()
+        target_ip = self._target_ip.text()
+        target_port = self._resolved_dst_port()
+        # A leg implies the role (you probe a front as a client, observe a
+        # back as a server), so it wins over the Role selector.
+        role = leg.implied_role if leg is not None else Role(self._role.currentText())
+        if leg is ProxyLeg.FRONT:
+            front_host, front_port = _split_host_port(self._proxy_front.text())
+            target_ip = front_host or target_ip
+            # An explicit Destination port still wins; 'random' would only
+            # measure closed-port behavior on the proxy's front.
+            if not self._dst_port.value() and front_port:
+                target_port = front_port
         return DUTConfig(
             interface=self._iface_combo.currentText(),
-            target_ip=self._target_ip.text(),
+            target_ip=target_ip,
             target_stack=self._target_stack.currentText(),
             target_mac=self._target_mac.text() or None,
-            target_port=self._resolved_dst_port(),
+            target_port=target_port,
             source_port=self._src_port.value() or None,
             allowed_targets=allowed,
-            role=Role(self._role.currentText()),
+            role=role,
+            proxy_leg=leg,
         )
 
     def _on_tree_selection(self, current, _previous) -> None:
         self._details.show_spec(self._tree.spec_of(current))
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Release the proxy backend's listening socket on exit."""
+        self._proxy_panel.shutdown()
+        super().closeEvent(event)
 
     def _on_run_clicked(self) -> None:
         self._metrics.clear()
@@ -182,7 +240,22 @@ class MainWindow(QMainWindow):
         self._right_tabs.setCurrentWidget(self._log_panel)
 
         config = self._current_dut_config()
-        if not self._dst_port.value():
+        leg = config.proxy_leg
+        if leg is not None:
+            self._log_panel.append_line(
+                f"Proxy leg '{leg.value}' — running the selected tests as {config.role.value} "
+                f"against {config.target_ip}:{config.target_port}."
+            )
+        if leg is ProxyLeg.BACK and not (
+            self._proxy_mode.currentData() and _split_host_port(self._proxy_backend.text())[0]
+        ):
+            self._log_panel.append_line(
+                "Proxy leg 'back' needs a Proxy mode and a Proxy backend address: the back leg "
+                "is idle unless traffic is driven through the front, so the run has to induce it. "
+                "Not starting the run."
+            )
+            return
+        if not self._dst_port.value() and leg is not ProxyLeg.FRONT:
             self._log_panel.append_line(
                 f"Destination port left on 'random' — using {config.target_port} for this session."
             )
@@ -216,12 +289,28 @@ class MainWindow(QMainWindow):
         selection = ", ".join(targets) if targets else "all tests"
         self._log_panel.append_line(f"Starting run (role={config.role.value}, selection: {selection})…")
 
+        proxy_mode = self._proxy_mode.currentData()
+        proxy_host, proxy_port = _split_host_port(self._proxy_front.text())
+        backend_host, backend_port = _split_host_port(self._proxy_backend.text())
+        if proxy_mode:
+            self._log_panel.append_line(
+                f"Proxy mode {proxy_mode}: front={proxy_host or '-'}:{proxy_port or '-'}, "
+                f"backend={backend_host or '-'}:{backend_port or '-'} "
+                "(the backend instance must be running)."
+            )
+
         request = RunRequest(
             config=config,
             targets=targets,
             confirm_vuln_tests=self._confirm_vuln.isChecked(),
             debug=self._debug.isChecked(),
             role=config.role,
+            proxy_mode=proxy_mode,
+            proxy_leg=leg.value if leg else None,
+            proxy_host=proxy_host,
+            proxy_port=proxy_port,
+            backend_host=backend_host,
+            backend_port=backend_port,
         )
         self._controller.start(request)
 
@@ -255,6 +344,28 @@ class MainWindow(QMainWindow):
                     "Everything selected was skipped — see the SKIP reason(s) above "
                     "(often a role mismatch: switch the Role selector)."
                 )
+
+
+def _split_host_port(text: str) -> tuple[str | None, int | None]:
+    """Parse a `host:port` field, tolerating IPv6 literals in brackets.
+
+    Returns (None, None) for an empty field so the option is simply omitted.
+    """
+    value = text.strip()
+    if not value:
+        return None, None
+    if value.startswith("["):  # [::1]:9099
+        host, _, rest = value.partition("]")
+        host = host.lstrip("[")
+        port = rest.lstrip(":")
+    else:
+        host, _, port = value.rpartition(":")
+        if not host:  # no colon at all — treat the whole field as the host
+            return value, None
+    try:
+        return host, int(port)
+    except ValueError:
+        return host or None, None
 
 
 def _list_interface_names() -> list[str]:

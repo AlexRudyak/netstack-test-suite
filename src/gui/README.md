@@ -21,6 +21,7 @@ Installed as `netstack-gui`.
 | `log_panel.py` | `LogPanel` — streaming output/results |
 | `report_panel.py` | `ReportPanel` — PDF/HTML export |
 | `custom_packet_panel.py` | `CustomPacketPanel` — ad-hoc send form |
+| `proxy_panel.py` | `ProxyBackendPanel` — run this instance as the origin a proxy DUT dials |
 
 ![The netstack-gui main window](../../docs/images/gui-main-window.png)
 
@@ -35,12 +36,14 @@ MainWindow
 ├── DUT configuration group  (interface, target IP/MAC, optional source
 │                             port, destination port [blank = random],
 │                             target stack, role, allowed CIDRs,
-│                             vuln-confirm, debug checkboxes)
+│                             vuln-confirm, debug checkboxes, proxy
+│                             mode/front/backend/leg)
 ├── Tabs
 │   ├── Automated Suite
 │   │   ├── TestTreeWidget  +  Run / Stop
 │   │   └── Tabs: RealtimePlotWidget (live plot) | LogPanel
-│   └── Custom Packet  →  CustomPacketPanel
+│   ├── Custom Packet   →  CustomPacketPanel
+│   └── Proxy Backend   →  ProxyBackendPanel
 └── ReportPanel  (Export PDF / HTML)
 ```
 
@@ -70,8 +73,9 @@ The DUT configuration group built by `_build_config_group()`:
 | `_build_config_group()` | DUT config form: interface, target IP/MAC, optional **Source port** (spinbox showing `auto` at 0 → `None`), **Destination port** (spinbox showing `random` at 0), target stack, role, allowed CIDRs, plus the **Debug mode** and vuln-authorization checkboxes. |
 | `_resolved_dst_port()` | The Destination port field, or a session-stable random ephemeral port (`src.config.random_ephemeral_port`) when it's left on `random`. Chosen once, then reused for every run in the session; logged on the run that first picks it. |
 | `_build_suite_tab()` | Test tree + Run/Stop + live-plot/log tabs. |
-| `_current_dut_config() -> DUTConfig` | Reads the form into a `DUTConfig`. |
-| `_on_run_clicked()` | Switches to the Log tab, runs the **preflight** check (aborting with a logged reason on a hard blocker), derives scope from the tree, builds a `RunRequest` (with `debug`/`confirm_vuln_tests`), starts the controller. |
+| `_current_dut_config() -> DUTConfig` | Reads the form into a `DUTConfig`, applying the **Proxy leg**: `front` retargets to the Proxy front address/port and forces the client role, `back` forces the server role (the leg implies the role, so it overrides the Role selector). |
+| `_selected_proxy_leg() -> ProxyLeg \| None` | The Proxy leg combo, or `None` for ordinary endpoint testing. |
+| `_on_run_clicked()` | Switches to the Log tab, runs the **preflight** check (aborting with a logged reason on a hard blocker), derives scope from the tree, builds a `RunRequest` (with `debug`/`confirm_vuln_tests`/proxy topology), starts the controller. A `back` leg with no proxy mode or backend address is refused here with an explanation — otherwise every server-role test would silently time out. |
 | `_on_finished(result)` | Updates the report panel and logs the final `passed/failed/errored/total` (or the error/no-tests reason). |
 | `_on_test_event` / `_on_packet_event` / `_on_output_line` / `_on_finished` | Signal handlers → log panel, metrics buffer, report panel. |
 
@@ -168,3 +172,16 @@ stretching them across the screen.
 Selecting **Custom** swaps the size field for the text/hex/file sub-form (the `QStackedWidget`):
 
 ![Custom Packet panel in Custom payload mode](../../docs/images/gui-custom-packet-custom-payload.png)
+
+## proxy_panel.py
+
+`ProxyBackendPanel(QWidget)` — the GUI twin of `netstack-cli proxy-serve`.
+Runs this instance as the **origin server** a proxy DUT dials out to, so the
+other instance can drive traffic through the front. Listen address/port
+(port `0` = `auto (ephemeral)`) plus an optional UDP echo, with live
+`BackendStats` counters and an event log: a connection appearing here is
+direct evidence the DUT's *client* leg works.
+
+`MainWindow.closeEvent` calls `shutdown()` so the listening socket is
+released when the window closes. See
+[`docs/proxy_testing.md`](../../docs/proxy_testing.md).

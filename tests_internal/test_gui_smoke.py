@@ -659,3 +659,44 @@ def test_a_malformed_proxy_field_blocks_the_run(qtbot, monkeypatch) -> None:
 
     assert not started, "the run started with a port the operator did not type"
     assert "not a port number" in window._log_panel.toPlainText()
+
+
+def test_a_rejected_custom_packet_reports_the_reason(qtbot, monkeypatch) -> None:
+    """The panel's catch-all rendered four quite different failures as one
+    untyped line and logged none of them."""
+    from src.gui.custom_packet_panel import CustomPacketPanel
+
+    panel = CustomPacketPanel()
+    qtbot.addWidget(panel)
+    panel._mode_custom.setChecked(True)
+    panel._custom_hex.setText("zz")  # not hex: a ConfigurationError
+
+    panel._on_send()
+
+    assert "Error:" in panel._response_view.toPlainText()
+    assert "not valid hex" in panel._response_view.toPlainText()
+
+
+def test_an_unexpected_custom_packet_failure_is_typed_and_logged(
+    qtbot, monkeypatch, caplog
+) -> None:
+    """A bug or a Scapy refusal keeps the window (this is a `clicked` slot),
+    but its traceback must reach gui.log rather than being discarded."""
+    import src.gui.custom_packet_panel as panel_mod
+    from src.gui.custom_packet_panel import CustomPacketPanel
+
+    def _explode(*_args, **_kwargs):
+        raise OSError("no such device: eth42")
+
+    monkeypatch.setattr(panel_mod, "send_custom_packet", _explode)
+
+    panel = CustomPacketPanel()
+    qtbot.addWidget(panel)
+
+    with caplog.at_level("ERROR"):
+        panel._on_send()
+
+    shown = panel._response_view.toPlainText()
+    assert "OSError" in shown, "the operator cannot tell a bug from bad input"
+    assert "no such device" in shown
+    assert "Custom packet send failed" in caplog.text

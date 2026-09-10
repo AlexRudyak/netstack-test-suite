@@ -97,3 +97,37 @@ def test_cli_and_gui_offer_exactly_the_declared_protocols() -> None:
 
     option = next(p for p in cli_main.send.params if p.name == "proto")
     assert set(option.type.choices) == {p.value for p in Proto}
+
+
+# --- host socket backend ----------------------------------------------------
+
+
+def test_supported_hosts_each_have_a_backend() -> None:
+    """SUPPORTED_HOSTS is what the error message promises; _BACKENDS is what
+    get_backend can actually deliver. They must agree."""
+    from src.packet_engine.platform_backend import SUPPORTED_HOSTS, _BACKENDS
+
+    assert set(_BACKENDS) == set(SUPPORTED_HOSTS)
+
+
+def test_each_backend_sets_the_socket_path_its_host_needs(monkeypatch) -> None:
+    """Windows forces Npcap-backed L2 sockets; Linux uses native AF_PACKET.
+    Standardising on L2 for both is the point of this module."""
+    from scapy.config import conf
+
+    from src.packet_engine import platform_backend
+
+    for system, expected in (("Windows", True), ("Linux", False)):
+        monkeypatch.setattr(platform_backend.platform, "system", lambda s=system: s)
+        backend = platform_backend.get_backend()
+        assert backend.host_name == system
+        backend.configure()
+        assert conf.use_pcap is expected
+
+
+def test_unsupported_host_is_refused_with_the_shared_message(monkeypatch) -> None:
+    from src.packet_engine import platform_backend
+
+    monkeypatch.setattr(platform_backend.platform, "system", lambda: "Darwin")
+    with pytest.raises(RuntimeError, match="Unsupported host platform"):
+        platform_backend.get_backend()

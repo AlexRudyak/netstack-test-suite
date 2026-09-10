@@ -68,6 +68,21 @@ class CaptureError(NetstackError):
     """A packet capture could not be started, or failed while running."""
 
 
+class RunArtifactError(NetstackError):
+    """A run's directory or results file could not be written.
+
+    The pcap and the debug log flush per frame, so the *evidence* of a run
+    survives a full disk or a read-only reports/ — it is the verdict and the
+    machine-readable record that do not, and results.json is the only thing
+    `reporting.collector.load_run_result` can read back.
+
+    Raised rather than left as a bare OSError so both entry points can tell
+    the operator which file, and say that the rest of the run is still on
+    disk: in the GUI these writes happen inside Qt slots, where an unhandled
+    exception reaches sys.excepthook and ends the process.
+    """
+
+
 class ProtocolViolation(NetstackError, ValueError):
     """The peer's bytes do not conform to the protocol's RFC.
 

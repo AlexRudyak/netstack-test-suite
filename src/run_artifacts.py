@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+from src.errors import RunArtifactError
 from src.reporting.models import TestRunResult
 
 
@@ -91,8 +92,14 @@ class RunArtifacts:
     # --- results.json, written and read in one place -----------------------
 
     def save(self, result: TestRunResult) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.results.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self.results.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        except OSError as exc:
+            raise RunArtifactError(
+                f"Could not write {self.results}: {exc}. The run itself completed — "
+                "its pcap and logs are already on disk in the same directory."
+            ) from exc
 
     def load(self) -> TestRunResult:
         return TestRunResult.from_dict(json.loads(self.results.read_text(encoding="utf-8")))

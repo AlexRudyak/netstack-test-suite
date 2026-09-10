@@ -504,3 +504,67 @@ def test_interface_enumeration_failure_is_logged_not_swallowed(monkeypatch, capl
         assert main_window_mod._list_interface_names() == []
 
     assert "Could not enumerate network interfaces" in caplog.text
+
+
+def test_an_uncreatable_run_directory_reports_instead_of_crashing(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    """`start` runs inside a `clicked` slot, where an escaping exception
+    reaches sys.excepthook — which logs, shows a dialog, and ends the
+    process. An unwritable reports/ must not cost the session."""
+    import src.gui.run_controller as run_controller_mod
+    from src.config import DUTConfig
+    from src.errors import RunArtifactError
+    from src.gui.run_controller import RunController
+    from src.runner import RunRequest
+
+    def _refuse() -> tuple[str, object]:
+        raise RunArtifactError("Could not create the run directory /nope: denied")
+
+    monkeypatch.setattr(run_controller_mod, "new_run_dir", _refuse)
+
+    controller = RunController()
+    request = RunRequest(
+        config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")
+    )
+
+    with qtbot.waitSignal(controller.failed, timeout=5000) as blocker:
+        controller.start(request)
+
+    assert "Could not create the run directory" in blocker.args[0]
+    assert not controller._timer.isActive()
+
+
+def test_a_results_write_failure_still_delivers_the_run(qtbot, tmp_path, monkeypatch) -> None:
+    """finalize_run is called from Qt slots. A full disk there used to take
+    the window down; the run's result is complete in memory either way."""
+    import src.gui.run_controller as run_controller_mod
+    from src.config import DUTConfig
+    from src.errors import RunArtifactError
+    from src.gui.run_controller import RunController
+    from src.runner import RunRequest
+
+    monkeypatch.setattr(
+        run_controller_mod,
+        "build_pytest_args",
+        lambda request, run_dir: [str(tmp_path / "no-such-interpreter"), "tests"],
+    )
+    monkeypatch.setattr(run_controller_mod, "new_run_dir", lambda: ("run-z", tmp_path))
+
+    def _refuse(result, run_dir, returncode):
+        raise RunArtifactError("Could not write results.json: no space left on device")
+
+    monkeypatch.setattr(run_controller_mod, "finalize_run", _refuse)
+
+    controller = RunController()
+    reported: list[str] = []
+    controller.save_failed.connect(reported.append)
+    request = RunRequest(
+        config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")
+    )
+
+    with qtbot.waitSignal(controller.finished, timeout=5000) as blocker:
+        controller.start(request)
+
+    assert blocker.args[0] is not None, "the completed run was not delivered"
+    assert reported and "no space left" in reported[0]

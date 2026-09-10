@@ -13,6 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from src import paths
+from src.errors import RunArtifactError
 from src.reporting.models import TestRunResult
 from src.run_artifacts import RunArtifacts
 from src.runner import (
@@ -34,6 +35,7 @@ class RunController(QObject):
     output_line = Signal(str)
     finished = Signal(object)  # emits the completed TestRunResult
     failed = Signal(str)  # emits why the runner could not be started
+    save_failed = Signal(str)  # emits why a completed run could not be saved
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -47,7 +49,14 @@ class RunController(QObject):
         self._events_offset = 0
 
     def start(self, request: RunRequest) -> None:
-        run_id, run_dir = new_run_dir()
+        try:
+            run_id, run_dir = new_run_dir()
+        except RunArtifactError as exc:
+            # This runs inside a `clicked` slot: an exception escaping here
+            # reaches sys.excepthook, which shows the operator a dialog and
+            # then ends the process — over a directory that could not be made.
+            self.failed.emit(str(exc))
+            return
         self._run_dir = run_dir
         self._report_offset = 0
         self._events_offset = 0
@@ -92,12 +101,18 @@ class RunController(QObject):
             return
         self._timer.stop()
         reason = self._process.errorString() if self._process is not None else "unknown error"
-        self.failed.emit(f"Could not start the test runner: {reason}")
+        # The hint belongs here, next to errorString(): `failed` now also
+        # carries a run directory that could not be created, where advice
+        # about the interpreter would point at the wrong thing.
+        self.failed.emit(
+            f"Could not start the test runner: {reason}. Check that the Python "
+            "interpreter and the test tree are reachable from the project directory."
+        )
         if self._result is not None and self._run_dir is not None:
             # No return code: the process never ran, so there is none to
             # report. finalize_run still writes results.json, which keeps a
             # failed launch visible in the reports directory.
-            self.finished.emit(finalize_run(self._result, self._run_dir, None))
+            self.finished.emit(self._finalize(None))
 
     def _on_output(self) -> None:
         assert self._process is not None
@@ -127,5 +142,19 @@ class RunController(QObject):
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self._timer.stop()
         self._drain()
+        self.finished.emit(self._finalize(exit_code))
+
+    def _finalize(self, returncode: int | None) -> TestRunResult:
+        """Persist the run, reporting a write failure rather than raising it.
+
+        Both callers are Qt slots, where an escaping exception reaches
+        sys.excepthook and ends the process. The in-memory result is complete
+        either way — what a failed write costs is the ability to re-open the
+        run and regenerate its report later.
+        """
         assert self._result is not None and self._run_dir is not None
-        self.finished.emit(finalize_run(self._result, self._run_dir, exit_code))
+        try:
+            return finalize_run(self._result, self._run_dir, returncode)
+        except RunArtifactError as exc:
+            self.save_failed.emit(str(exc))
+            return self._result

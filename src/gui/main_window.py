@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
         self._controller.output_line.connect(self._on_output_line)
         self._controller.finished.connect(self._on_finished)
         self._controller.failed.connect(self._on_launch_failed)
+        self._controller.save_failed.connect(self._on_save_failed)
 
         self._build_ui()
 
@@ -376,9 +377,19 @@ class MainWindow(QMainWindow):
         a QProcess that fails to start emits no `finished`."""
         self._launch_failed = True
         self._log_panel.append_line(message)
+        self._log_panel.append_line("No tests were run.")
+
+    def _on_save_failed(self, message: str) -> None:
+        """The run finished but its results could not be written to disk.
+
+        Distinct from a launch failure: the verdict below is real, and the
+        panels still show it — what is gone is the saved copy this run could
+        have been re-reported from without touching the DUT again.
+        """
+        self._log_panel.append_line(message)
         self._log_panel.append_line(
-            "No tests were run. Check that the Python interpreter and the test "
-            "tree are reachable from the project directory."
+            "The results below are from this session only — export a report now "
+            "if you need to keep them."
         )
 
     def _on_finished(self, result: TestRunResult) -> None:

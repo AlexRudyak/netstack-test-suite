@@ -37,6 +37,7 @@ from pathlib import Path
 
 from src import paths
 from src.config import DUTConfig, Role
+from src.errors import RunArtifactError
 from src.packet_engine.payloads import PayloadMode
 from src.reporting.models import (
     PacketDirection,
@@ -245,7 +246,13 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
 def new_run_dir() -> tuple[str, Path]:
     run_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
     run_dir = reports_dir() / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # Translated here rather than left bare: this is the first thing both
+        # front ends do, and in the GUI it runs inside a `clicked` slot, where
+        # an unhandled exception ends the process instead of the run.
+        raise RunArtifactError(f"Could not create the run directory {run_dir}: {exc}") from exc
     return run_id, run_dir
 
 
@@ -320,7 +327,14 @@ def stream_run(
     # undrained PIPE would fill its OS buffer under -v output and deadlock
     # pytest (it blocks on write while we block on poll). The file keeps the
     # raw output available for debugging without that risk.
-    with artifacts.pytest_output.open("w", encoding="utf-8") as out:
+    try:
+        out = artifacts.pytest_output.open("w", encoding="utf-8")
+    except OSError as exc:
+        raise RunArtifactError(
+            f"Could not open {artifacts.pytest_output} for the runner's output: {exc}"
+        ) from exc
+
+    with out:
         proc = subprocess.Popen(
             args, stdout=out, stderr=subprocess.STDOUT, text=True, cwd=str(paths.project_root())
         )

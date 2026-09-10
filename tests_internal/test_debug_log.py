@@ -145,3 +145,23 @@ def test_configure_logging_can_raise_the_level_on_a_second_call() -> None:
         assert logging.getLogger().level == logging.DEBUG
     finally:
         logging.basicConfig(force=True)
+
+
+def test_an_unwritable_log_destination_says_so(tmp_path, capsys) -> None:
+    """gui.log exists because the GUI's log panel is cleared at the start of
+    every run, so it is the only durable record. When it cannot be opened,
+    the operator has to be told — this was the last silent handler in src/."""
+    import logging
+
+    from src.utils.logging_config import configure_logging
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("", encoding="utf-8")
+    try:
+        configure_logging(log_file=blocker / "sub" / "gui.log")
+    finally:
+        logging.basicConfig(force=True)
+
+    reported = capsys.readouterr().out
+    assert "Could not open the log file" in reported
+    assert "console only" in reported

@@ -33,6 +33,7 @@ class RunController(QObject):
     packet_event = Signal(object)  # emits PacketEvent
     output_line = Signal(str)
     finished = Signal(object)  # emits the completed TestRunResult
+    failed = Signal(str)  # emits why the runner could not be started
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -60,12 +61,43 @@ class RunController(QObject):
         self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self._process.readyReadStandardOutput.connect(self._on_output)
         self._process.finished.connect(self._on_finished)
-        self._process.start(args[0], args[1:])
+        self._process.errorOccurred.connect(self._on_error)
+        # Start polling *before* launching: QProcess.start emits
+        # errorOccurred synchronously on FailedToStart, so a timer started
+        # afterwards would outlive the handler that stops it.
         self._timer.start()
+        self._process.start(args[0], args[1:])
 
     def stop(self) -> None:
         if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
             self._process.kill()
+        else:
+            # Nothing is running to deliver `finished`, so the poll timer
+            # would otherwise keep tailing files that will never grow.
+            self._timer.stop()
+
+    def _on_error(self, error: QProcess.ProcessError) -> None:
+        """A QProcess that never starts never emits `finished`.
+
+        Without this the run's QTimer polls a report log that will never be
+        created, `finalize_run` is never called, and the Log tab shows
+        "Starting run…" and then nothing at all — for a missing interpreter,
+        a frozen build whose sys.executable moved, or an unreadable working
+        directory.
+
+        Crashed/Timedout still deliver `finished`, so only FailedToStart is
+        handled here; anything else would double-report the run.
+        """
+        if error is not QProcess.ProcessError.FailedToStart:
+            return
+        self._timer.stop()
+        reason = self._process.errorString() if self._process is not None else "unknown error"
+        self.failed.emit(f"Could not start the test runner: {reason}")
+        if self._result is not None and self._run_dir is not None:
+            # No return code: the process never ran, so there is none to
+            # report. finalize_run still writes results.json, which keeps a
+            # failed launch visible in the reports directory.
+            self.finished.emit(finalize_run(self._result, self._run_dir, None))
 
     def _on_output(self) -> None:
         assert self._process is not None

@@ -95,20 +95,40 @@ class EchoBackend:
             self._on_event(message)
 
     def start(self) -> None:
-        self._tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._tcp_socket.bind((self.host, self.port))
-        self._bound_port = self._tcp_socket.getsockname()[1]
-        self._tcp_socket.listen(64)
-        self._tcp_socket.settimeout(0.5)  # so the accept loop can observe _stop
+        """Bind and serve. All-or-nothing.
+
+        Both sockets are bound before either thread starts, so a failure
+        part-way releases whatever was already bound. Binding TCP, spawning
+        its accept loop, and only then binding UDP meant a UDP bind failure
+        (the port taken by another process's UDP socket — likely, since
+        SO_REUSEADDR is set only on ours) left a live TCP listener with a
+        running accept thread. The GUI's caller never reached its
+        `self._backend = backend` assignment in that case, so it held no
+        reference, `_stop()` was a no-op, and closing the window could not
+        release the port: only process exit could.
+        """
+        self._stop.clear()  # a previous stop() latched it; the loops read it
+        try:
+            self._tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._tcp_socket.bind((self.host, self.port))
+            self._bound_port = self._tcp_socket.getsockname()[1]
+            self._tcp_socket.listen(64)
+            self._tcp_socket.settimeout(0.5)  # so the accept loop can observe _stop
+
+            if self.enable_udp:
+                self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self._udp_socket.bind((self.host, self.bound_port))
+                self._udp_socket.settimeout(0.5)
+        except OSError:
+            self.stop()  # closes whichever socket bound; no threads to join yet
+            self._bound_port = None  # don't report a port we no longer hold
+            raise
+
         self._spawn(self._accept_loop, "echo-backend-tcp")
         self._emit(f"TCP echo backend listening on {self.host}:{self.bound_port}")
-
         if self.enable_udp:
-            self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._udp_socket.bind((self.host, self.bound_port))
-            self._udp_socket.settimeout(0.5)
             self._spawn(self._udp_loop, "echo-backend-udp")
             self._emit(f"UDP echo backend listening on {self.host}:{self.bound_port}")
 

@@ -312,3 +312,139 @@ def test_none_writes_no_report(monkeypatch, stub_result, tmp_path) -> None:
         )
     cli_main._emit_results(stub_result, tmp_path, report=formats.NO_REPORT, debug=False)
     assert called == []
+
+
+# --- The entry-point error boundary ---------------------------------------
+# NetstackCLI.invoke renders a NetstackError as a message and exits with the
+# code the exception carries. Before it, an unparseable --payload-hex or an
+# unreadable --payload-file reached the operator as a raw traceback naming
+# neither the flag at fault nor what to do about it.
+
+
+def _send_args(*extra: str) -> list[str]:
+    return [
+        "send", "--proto", "tcp", "--iface", "eth0",
+        "--src-ip", "10.0.0.1", "--dst-ip", "10.0.0.5",
+        "--src-port", "1234", "--dst-port", "80",
+        "--src-mac", "aa:bb:cc:dd:ee:ff", "--dst-mac", "aa:bb:cc:dd:ee:00",
+        "--payload-mode", "custom", *extra,
+    ]
+
+
+def test_unparseable_payload_hex_is_a_message_not_a_traceback() -> None:
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload-hex", "zz"))
+
+    assert result.exit_code == 2
+    assert "Error: payload hex is not valid hex" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_unreadable_payload_file_is_a_message_not_a_traceback(tmp_path) -> None:
+    missing = tmp_path / "absent.bin"
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload-file", str(missing)))
+
+    assert result.exit_code == 2
+    assert "could not be read" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_the_boundary_uses_the_exception_s_own_exit_code(monkeypatch) -> None:
+    """The code belongs with the failure that decides it, so a script can
+    tell an unauthorized target from unparseable flags."""
+    from src.errors import UnauthorizedTargetError
+
+    def explode(*_args, **_kwargs):
+        raise UnauthorizedTargetError("10.0.0.5 is not in the allow-list")
+
+    monkeypatch.setattr(cli_main, "send_custom_packet", explode)
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "hi"))
+
+    assert result.exit_code == UnauthorizedTargetError.exit_code == 3
+    assert "not in the allow-list" in result.output
+
+
+def test_a_bug_keeps_its_traceback(monkeypatch) -> None:
+    """The catch is narrow on purpose: hiding a genuine bug behind a tidy
+    one-line message would cost more than it saves."""
+    def explode(*_args, **_kwargs):
+        raise TypeError("this is a bug, not an operator error")
+
+    monkeypatch.setattr(cli_main, "send_custom_packet", explode)
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "hi"))
+
+    assert isinstance(result.exception, TypeError)
+
+
+# --- A failed report must not cost the run's verdict ----------------------
+
+
+def test_a_failing_report_generator_does_not_lose_the_exit_code(
+    monkeypatch, stub_result, tmp_path, capsys
+) -> None:
+    """The tests have already run against the DUT by this point — possibly
+    for an hour. A reportlab or matplotlib failure used to leave
+    _emit_results before its `return`, so the process exited on a traceback
+    instead of the run's real pass/fail code.
+    """
+    from src.reporting import formats
+    from src.reporting.models import TestEvent, TestOutcome
+
+    stub_result.tests.append(TestEvent("tests/x.py::t", TestOutcome.FAILED, 0.1))
+
+    def explode(_result, _path):
+        raise OSError("[Errno 13] Permission denied")
+
+    monkeypatch.setitem(
+        formats.BY_KEY, "pdf", formats.ReportFormat("pdf", "PDF", explode)
+    )
+
+    exit_code = cli_main._emit_results(stub_result, tmp_path, report="pdf", debug=False)
+
+    assert exit_code == 1, "a failed test run must still exit 1"
+    assert "Could not write the PDF report" in capsys.readouterr().err
+
+
+def test_a_failing_report_points_at_the_data_that_survived(
+    monkeypatch, stub_result, tmp_path, capsys
+) -> None:
+    """results.json is already written by finalize_run, so the report can be
+    regenerated without re-testing — the message has to say so."""
+    from src.reporting import formats
+
+    monkeypatch.setitem(
+        formats.BY_KEY,
+        "pdf",
+        formats.ReportFormat("pdf", "PDF", lambda r, p: (_ for _ in ()).throw(OSError("disk full"))),
+    )
+
+    cli_main._emit_results(stub_result, tmp_path, report="pdf", debug=False)
+
+    assert "results.json" in capsys.readouterr().err
+
+
+# --- Exit codes -----------------------------------------------------------
+# Only `run` set one. The other commands fell off the end of their function
+# and exited 0, so a script could not tell success from the exact condition
+# each command exists to detect.
+
+
+def test_send_exits_non_zero_when_nothing_replies(monkeypatch) -> None:
+    monkeypatch.setattr(cli_main, "send_custom_packet", lambda *a, **k: None)
+
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "probe"))
+
+    assert result.exit_code == 1
+    assert "No reply received" in result.output
+
+
+def test_send_exits_zero_when_the_dut_answers(monkeypatch) -> None:
+    class _Reply:
+        def summary(self) -> str:
+            return "Ether / IP / TCP 10.0.0.5:80 > 10.0.0.1:1234 SA"
+
+    monkeypatch.setattr(cli_main, "send_custom_packet", lambda *a, **k: _Reply())
+
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "probe"))
+
+    assert result.exit_code == 0
+    assert "SA" in result.output

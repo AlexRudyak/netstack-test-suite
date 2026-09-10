@@ -20,22 +20,14 @@ import socket
 from dataclasses import dataclass
 from typing import Protocol
 
+from src.errors import ProxyTunnelError
 from src.proxy import tunnel
 from src.proxy.config import ProxyConfig, ProxyMode
 
-
-class ProxyTunnelError(RuntimeError):
-    """The DUT refused or mishandled the tunnel-establishment handshake.
-
-    `details` carries whatever the DUT managed to report before the
-    failure (an HTTP error response, a non-zero SOCKS5 reply), or None
-    when it said nothing. The conformance tests assert on it: "refused
-    with a defined error code" is a pass, "reported success" is not.
-    """
-
-    def __init__(self, message: str, details: object = None) -> None:
-        super().__init__(message)
-        self.details = details
+# Re-exported: raised by every handshake here and re-exported again by
+# client.py, which is where callers reach for it. The class lives in
+# src/errors.py so it shares the NetstackError base.
+__all__ = ["ProxyTunnelError", "Socks5Result", "TunnelHandshake", "for_config"]
 
 
 class TunnelHandshake(Protocol):
@@ -59,6 +51,20 @@ class TransparentHandshake:
         return None
 
 
+# What a CONNECT refusal means, in the terms the operator has to act on.
+# The SOCKS5 side already does this — tunnel.SOCKS5_REPLY_MESSAGES maps all
+# nine RFC 1928 §6 reply codes — so a 407 read exactly like a 502 only
+# because the HTTP side had no equivalent.
+_CONNECT_HINTS = {
+    403: "the proxy's ruleset forbids this origin",
+    405: "the DUT does not implement the CONNECT method (RFC 9110 §9.3.6)",
+    407: "the proxy requires authentication (RFC 9110 §11.7); no HTTP proxy "
+         "credentials are configured",
+    502: "the proxy could not reach the origin — is the backend instance running?",
+    504: "the proxy timed out reaching the origin",
+}
+
+
 class HttpConnectHandshake:
     """RFC 9110 §9.3.6 / RFC 9112 CONNECT tunnel."""
 
@@ -67,11 +73,12 @@ class HttpConnectHandshake:
         sock.sendall(tunnel.build_http_connect_request(host, port))
         response = tunnel.parse_http_connect_response(tunnel.read_http_response_head(read))
         if not response.tunnel_established:
-            raise ProxyTunnelError(
+            hint = _CONNECT_HINTS.get(response.status)
+            message = (
                 f"CONNECT {tunnel.format_authority(host, port)} was refused: "
-                f"{response.status} {response.reason}".strip(),
-                response,
+                f"{response.status} {response.reason}".strip()
             )
+            raise ProxyTunnelError(f"{message} — {hint}" if hint else message, response)
         return response
 
 

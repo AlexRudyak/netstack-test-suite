@@ -204,6 +204,40 @@ def confirm_vuln_tests(pytestconfig: pytest.Config) -> bool:
     return bool(pytestconfig.getoption("--confirm-vuln-tests"))
 
 
+@pytest.fixture(autouse=True)
+def enforce_vuln_authorization(request: pytest.FixtureRequest) -> None:
+    """Every `vuln`-marked test passes the safety gate before its body runs.
+
+    Driven by the marker rather than called by hand at the top of each test.
+    The hand-called form was enforcement by convention: three of the four
+    `vuln`-marked tests called `enforce_vuln_test_authorization` and the
+    fourth (tests/icmp/test_icmp_errors.py) simply did not, so it fired
+    malformed traffic at whatever `--dut-ip` named with neither the
+    allow-list check nor the confirmation flag — and nothing in the suite
+    could notice the omission, because a missing call looks like no call.
+
+    Autouse so a new `@pytest.mark.vuln` test is covered the moment it is
+    written; it is a no-op for every unmarked test, which is all of them
+    except four.
+
+    This is function-scoped, so the session-scoped `network_interface` — and
+    with it `require_elevation` — is set up first: on an unelevated host the
+    privilege error is what the operator sees, and the authorization error
+    only after that is fixed. Both are setup errors, so an unauthorized test
+    body never runs either way; the ordering only decides which blocker is
+    reported first.
+    """
+    if request.node.get_closest_marker("vuln") is None:
+        return
+
+    from src.utils.safety import enforce_vuln_test_authorization
+
+    enforce_vuln_test_authorization(
+        request.getfixturevalue("dut_config"),
+        confirmed=request.getfixturevalue("confirm_vuln_tests"),
+    )
+
+
 @pytest.fixture(scope="session")
 def payload_settings(pytestconfig: pytest.Config) -> dict:
     from src.packet_engine.payloads import resolve_custom_source

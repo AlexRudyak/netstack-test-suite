@@ -20,6 +20,7 @@ associated transmission rather than everything on the segment.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -28,10 +29,13 @@ from scapy.packet import Packet
 from scapy.sendrecv import AsyncSniffer
 from scapy.utils import PcapWriter
 
+from src.errors import CaptureError
 from src.packet_engine.pcap import open_pcap
 from src.packet_engine.platform_backend import SocketBackend, get_backend
 
 RecorderCallback = Callable[[Packet], None]
+
+log = logging.getLogger(__name__)
 
 
 def build_host_filter(host_ip: str | None) -> str | None:
@@ -87,13 +91,32 @@ class PacketRecorder:
         self._sinks.append(sink)
 
     def _handle(self, packet: Packet) -> None:
-        # Called from the sniffer thread for every matching frame.
-        assert self._writer is not None
-        self._writer.write(packet)  # incremental flush to disk
+        """Called from the sniffer thread for every matching frame.
+
+        Nothing here may raise. Scapy's AsyncSniffer catches whatever escapes
+        its prn, stores it on the sniffer, and ends the thread — so a failing
+        sink silently stopped the recording, and the CLI went on printing
+        "Press Ctrl+C to stop." over a sniffer that had already died.
+
+        This is the opposite policy to NetworkInterface.subscribe, which
+        deliberately lets a sink raise. There the sink runs on the test's own
+        thread, where an exception fails the test that owns it; here it runs
+        on a background thread where an exception is invisible.
+        """
+        writer = self._writer
+        if writer is None:
+            # Not an assert: `python -O` strips those, and this is the only
+            # guard against a frame arriving after _close_writer().
+            log.warning("Dropping a frame recorded after the capture was closed")
+            return
+        writer.write(packet)  # incremental flush to disk
         with self._lock:
             self._packet_count += 1
         for sink in self._sinks:
-            sink(packet)
+            try:
+                sink(packet)
+            except Exception:
+                log.exception("A recorder sink raised; continuing the capture")
 
     def start(self, *, count: int = 0, timeout: float | None = None) -> None:
         """Begin recording. Non-blocking — returns immediately while the
@@ -112,16 +135,42 @@ class PacketRecorder:
 
     def join(self) -> None:
         """Block until a count/timeout-bounded capture finishes on its own."""
-        if self._sniffer is not None:
-            self._sniffer.join()
-        self._close_writer()
+        try:
+            if self._sniffer is not None:
+                self._sniffer.join()
+        except Exception as exc:
+            raise self._capture_error(exc) from exc
+        finally:
+            self._close_writer()
 
     def stop(self) -> int:
-        """Stop an unbounded capture. Returns the number of packets written."""
-        if self._sniffer is not None and self._sniffer.running:
-            self._sniffer.stop()
-        self._close_writer()
+        """Stop an unbounded capture. Returns the number of packets written.
+
+        Scapy sets AsyncSniffer.running *before* it opens the socket, so a
+        capture that never started (bad interface, invalid BPF filter) leaves
+        a dead thread with the exception stored on the sniffer — which
+        `stop()` and `join()` then re-raise. Callers put this in a `finally:`
+        (see cli.main.record), where an escaping exception skips the writer
+        close, suppresses the "wrote N packets" line, and replaces a clean
+        Ctrl+C exit with a raw traceback.
+
+        So the failure is translated into a CaptureError the entry-point
+        boundary can render, and the writer is closed either way.
+        """
+        try:
+            if self._sniffer is not None and self._sniffer.running:
+                self._sniffer.stop()
+        except Exception as exc:
+            raise self._capture_error(exc) from exc
+        finally:
+            self._close_writer()
         return self.packet_count
+
+    def _capture_error(self, exc: Exception) -> CaptureError:
+        return CaptureError(
+            f"Capture on interface {self.iface!r} failed: {exc}. Check the interface "
+            f"name and the BPF filter ({self.bpf_filter!r})."
+        )
 
     def _close_writer(self) -> None:
         if self._writer is not None:

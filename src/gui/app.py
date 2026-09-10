@@ -27,12 +27,17 @@ def main() -> None:
 
     from PySide6.QtWidgets import QApplication
 
+    from src import paths
     from src.gui.main_window import MainWindow
     from src.utils.logging_config import configure_logging
     from src.utils.permissions import ElevationResult, relaunch_module_as_admin
 
     log = logging.getLogger(__name__)
-    configure_logging()
+    # A file as well as the console: the log panel is cleared at the start of
+    # every run, so without this the record of a failed run is destroyed by
+    # starting the next one. reports_base() is frozen-aware, so a packaged
+    # build writes next to the exe rather than into a temp extraction dir.
+    configure_logging(log_file=paths.reports_base() / "reports" / "gui.log")
 
     # Self-elevate on Windows before opening the window. If an elevated copy
     # is launched, exit so only it runs. If UAC is declined, continue
@@ -49,9 +54,36 @@ def main() -> None:
         )
 
     app = QApplication(sys.argv)
+    _install_excepthook(log)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+
+def _install_excepthook(log: logging.Logger) -> None:
+    """Turn an exception escaping a Qt slot into a logged dialog.
+
+    PySide6 hands an unhandled exception raised inside a slot invoked from
+    C++ to `sys.excepthook` and then terminates the process — so without
+    this, a bug in any handler closes the window with nothing written down
+    and nothing shown to the operator.
+
+    This is the GUI's counterpart to `cli.main.NetstackCLI.invoke`, and it
+    is deliberately the wider of the two: the CLI can afford to let a bug's
+    traceback through to a terminal, and a GUI has no terminal to let it
+    through to.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    def excepthook(kind, value, traceback) -> None:
+        log.exception("Unhandled exception in the GUI", exc_info=(kind, value, traceback))
+        QMessageBox.critical(
+            None,
+            "Unexpected error",
+            f"{kind.__name__}: {value}\n\nThe details were written to the log.",
+        )
+
+    sys.excepthook = excepthook
 
 
 if __name__ == "__main__":

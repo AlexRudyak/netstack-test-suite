@@ -20,6 +20,8 @@ import platform
 from dataclasses import dataclass
 from typing import Protocol
 
+from src.errors import UnsupportedHostError
+
 SUPPORTED_HOSTS = ("Windows", "Linux")
 
 
@@ -82,4 +84,4 @@ def get_backend() -> SocketBackend:
     try:
         return _BACKENDS[system]
     except KeyError:
-        raise RuntimeError(unsupported_host_message(system)) from None
+        raise UnsupportedHostError(unsupported_host_message(system)) from None

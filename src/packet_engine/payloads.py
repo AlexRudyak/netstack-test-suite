@@ -16,6 +16,8 @@ from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
+from src.errors import ConfigurationError
+
 
 class PayloadMode(Enum):
     ZEROS = "zeros"
@@ -42,11 +44,25 @@ def from_text(text: str) -> bytes:
 
 
 def from_hex(hex_str: str) -> bytes:
-    return bytes.fromhex(hex_str.replace(" ", "").replace(":", ""))
+    """Parse a hex payload, tolerating `aa bb` and `aa:bb` spacing.
+
+    A typo here is operator input, not a bug, so it is raised as a
+    ConfigurationError for the entry-point boundary to render — otherwise
+    `bytes.fromhex`'s ValueError reaches the user as a raw traceback that
+    names neither the flag nor what to do about it.
+    """
+    cleaned = hex_str.replace(" ", "").replace(":", "")
+    try:
+        return bytes.fromhex(cleaned)
+    except ValueError as exc:
+        raise ConfigurationError(f"payload hex is not valid hex: {exc}") from exc
 
 
 def from_file(path: str | Path) -> bytes:
-    return Path(path).read_bytes()
+    try:
+        return Path(path).read_bytes()
+    except OSError as exc:
+        raise ConfigurationError(f"payload file {str(path)!r} could not be read: {exc}") from exc
 
 
 def resolve_custom_source(
@@ -63,6 +79,11 @@ def resolve_custom_source(
     own idiomatic "custom mode needs a source" error (click.UsageError /
     pytest.UsageError / ValueError) rather than this module inventing a
     shared exception type they'd all have to catch and translate.
+
+    A source that *is* given but unusable — unparseable hex, an unreadable
+    file — is a different case, and does raise: ConfigurationError, from
+    `from_hex`/`from_file`. "No source" is a question about which front end
+    is asking; "bad source" is the same answer everywhere.
     """
     if text:
         return from_text(text)
@@ -99,7 +120,7 @@ def resolve_payload(
     """
     if mode is PayloadMode.CUSTOM:
         if custom is None:
-            raise ValueError("PayloadMode.CUSTOM requires `custom` bytes")
+            raise ConfigurationError("PayloadMode.CUSTOM requires `custom` bytes")
         return custom
     try:
         return _GENERATORS[mode](size)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from src.packet_engine.sequence import TCPSequenceTracker
-from src.utils.safety import enforce_vuln_test_authorization
 from src.utils.tcp_flags import is_syn_ack
 
 pytestmark = [pytest.mark.tcp, pytest.mark.syn, pytest.mark.vuln, pytest.mark.slow]
@@ -14,7 +13,7 @@ FLOOD_SYN_COUNT = 500
 
 
 def test_syn_flood_does_not_exhaust_connection_table(
-    network_interface, dut_config, craft, source_ports, confirm_vuln_tests, nodeid
+    network_interface, dut_config, craft, source_ports, nodeid
 ) -> None:
     """Sends a burst of SYNs from many source ports, never ACKed
     (half-open connections), then verifies the DUT can still complete a
@@ -24,8 +23,6 @@ def test_syn_flood_does_not_exhaust_connection_table(
     backlog and no cookie fallback will start dropping legitimate SYNs
     under the flood.
     """
-    enforce_vuln_test_authorization(dut_config, confirmed=confirm_vuln_tests)
-
     for _ in range(FLOOD_SYN_COUNT):
         tracker = TCPSequenceTracker.new()
         network_interface.send(

@@ -372,3 +372,135 @@ def test_build_run_request_carries_proxy_leg_when_selected(qtbot) -> None:
     assert config.role is Role.CLIENT
     assert config.target_ip == "10.0.0.7"
     assert config.target_port == 1080
+
+
+def test_a_runner_that_cannot_start_reports_instead_of_hanging(qtbot, tmp_path, monkeypatch) -> None:
+    """A QProcess that fails to start never emits `finished`.
+
+    So without errorOccurred wired up, the poll timer tails a report log
+    that will never be created, finalize_run is never called, and the Log
+    tab shows "Starting run…" and then nothing, forever.
+    """
+    import src.gui.run_controller as run_controller_mod
+    from src.config import DUTConfig
+    from src.gui.run_controller import RunController
+    from src.runner import RunRequest
+
+    # A launcher that cannot possibly start.
+    monkeypatch.setattr(
+        run_controller_mod,
+        "build_pytest_args",
+        lambda request, run_dir: [str(tmp_path / "no-such-interpreter"), "tests"],
+    )
+    monkeypatch.setattr(run_controller_mod, "new_run_dir", lambda: ("run-x", tmp_path))
+
+    controller = RunController()
+    request = RunRequest(
+        config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")
+    )
+
+    with qtbot.waitSignal(controller.failed, timeout=5000) as blocker:
+        controller.start(request)
+
+    assert "Could not start the test runner" in blocker.args[0]
+    assert not controller._timer.isActive(), "the poll timer outlived the failed launch"
+
+
+def test_a_failed_launch_still_finalizes_the_run(qtbot, tmp_path, monkeypatch) -> None:
+    """results.json is what keeps a failed launch visible in reports/."""
+    import src.gui.run_controller as run_controller_mod
+    from src.config import DUTConfig
+    from src.gui.run_controller import RunController
+    from src.run_artifacts import RunArtifacts
+    from src.runner import RunRequest
+
+    monkeypatch.setattr(
+        run_controller_mod,
+        "build_pytest_args",
+        lambda request, run_dir: [str(tmp_path / "no-such-interpreter"), "tests"],
+    )
+    monkeypatch.setattr(run_controller_mod, "new_run_dir", lambda: ("run-y", tmp_path))
+
+    controller = RunController()
+    request = RunRequest(
+        config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")
+    )
+
+    with qtbot.waitSignal(controller.finished, timeout=5000) as blocker:
+        controller.start(request)
+
+    result = blocker.args[0]
+    assert result.pytest_returncode is None  # the process never ran
+    assert RunArtifacts(tmp_path).results.exists()
+
+
+def test_a_failing_export_warns_instead_of_taking_the_window_down(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    """_export is a `clicked` slot and the save dialog lets the operator pick
+    a destination they can't write to. An exception leaving the slot reaches
+    sys.excepthook and closes the window, over a failed export of a run whose
+    data is already on disk.
+    """
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    from src.gui.report_panel import ReportPanel
+    from src.reporting import formats
+
+    from .conftest import make_run_result
+
+    panel = ReportPanel()
+    qtbot.addWidget(panel)
+    panel.set_result(make_run_result(run_id="export-run"))
+
+    destination = tmp_path / "report.pdf"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(destination), ""))
+    )
+    warned: list = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a))
+    )
+
+    def explode(_result, _path):
+        raise OSError("[Errno 13] Permission denied")
+
+    panel._export(formats.ReportFormat("pdf", "PDF", explode))
+
+    assert warned, "the operator was not told the export failed"
+    assert "Could not write the PDF report" in panel._status_label.text()
+
+
+def test_an_empty_interface_list_explains_itself(qtbot, monkeypatch, tmp_path) -> None:
+    """An empty combo box almost always means the packet driver is missing.
+    Silently empty, that reads as "you forgot to pick an interface" — the
+    preflight then names the field rather than the cause.
+    """
+    import src.gui.main_window as main_window_mod
+    import src.paths as paths_mod
+
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setattr(paths_mod, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(main_window_mod, "_list_interface_names", lambda: [])
+
+    window = main_window_mod.MainWindow()
+    qtbot.addWidget(window)
+
+    assert window._iface_combo.count() == 0
+    assert window._iface_combo.toolTip(), "no explanation offered for the empty list"
+
+
+def test_interface_enumeration_failure_is_logged_not_swallowed(monkeypatch, caplog) -> None:
+    import logging as logging_mod
+
+    import src.gui.main_window as main_window_mod
+
+    def explode():
+        raise OSError("Npcap is not installed")
+
+    monkeypatch.setattr("scapy.interfaces.get_working_ifaces", explode)
+
+    with caplog.at_level(logging_mod.ERROR):
+        assert main_window_mod._list_interface_names() == []
+
+    assert "Could not enumerate network interfaces" in caplog.text

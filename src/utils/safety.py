@@ -9,10 +9,13 @@ AND an explicit confirmation flag, checked before the test body runs.
 from __future__ import annotations
 
 from src.config import DUTConfig
+from src.errors import UnauthorizedTargetError
 
-
-class UnauthorizedTargetError(RuntimeError):
-    pass
+# Re-exported: every caller reaches for it as
+# src.utils.safety.UnauthorizedTargetError, and it is what this module
+# raises. The class itself lives in src/errors.py so the entry points can
+# catch every deliberate failure through one base.
+__all__ = ["UnauthorizedTargetError", "enforce_vuln_test_authorization"]
 
 
 def enforce_vuln_test_authorization(config: DUTConfig, *, confirmed: bool) -> None:

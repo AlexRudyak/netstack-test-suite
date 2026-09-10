@@ -7,16 +7,26 @@ CAP_NET_ADMIN granted to the interpreter via setcap.
 """
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import subprocess
 import sys
 
+from src.errors import InsufficientPrivilegesError, UnsupportedHostError
 from src.packet_engine.platform_backend import unsupported_host_message
 
-
-class InsufficientPrivilegesError(RuntimeError):
-    pass
+# Re-exported: callers (preflight, conftest) import it from here, next to
+# require_elevation. The class lives in src/errors.py so an entry-point
+# boundary can catch it through NetstackError.
+__all__ = [
+    "ElevationResult",
+    "InsufficientPrivilegesError",
+    "is_elevated",
+    "relaunch_module_as_admin",
+    "remediation_message",
+    "require_elevation",
+]
 
 
 def is_elevated() -> bool:
@@ -27,12 +37,18 @@ def is_elevated() -> bool:
 
             return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
         except Exception:
+            # Fail closed, but say so. Reported as "not elevated", this
+            # tells an operator who *is* running as Administrator to re-run
+            # as Administrator — with nothing written down to contradict it.
+            logging.getLogger(__name__).exception(
+                "The Windows elevation check failed; assuming not elevated"
+            )
             return False
     if system == "Linux":
         if os.geteuid() == 0:
             return True
         return _has_linux_capabilities()
-    raise RuntimeError(unsupported_host_message(system))
+    raise UnsupportedHostError(unsupported_host_message(system))
 
 
 def _has_linux_capabilities() -> bool:

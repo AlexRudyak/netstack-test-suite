@@ -7,6 +7,7 @@ from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.l2 import Ether
 from scapy.packet import Raw
 
+from src.errors import UnsupportedHostError
 from src.packet_engine.builders import build_ip, build_tcp, build_udp, wrap_ethernet
 
 pytestmark = [pytest.mark.internal]
@@ -129,5 +130,5 @@ def test_unsupported_host_is_refused_with_the_shared_message(monkeypatch) -> Non
     from src.packet_engine import platform_backend
 
     monkeypatch.setattr(platform_backend.platform, "system", lambda: "Darwin")
-    with pytest.raises(RuntimeError, match="Unsupported host platform"):
+    with pytest.raises(UnsupportedHostError, match="Unsupported host platform"):
         platform_backend.get_backend()

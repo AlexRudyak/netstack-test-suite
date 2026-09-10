@@ -18,6 +18,8 @@ import ipaddress
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from src.errors import ConfigurationError, ProtocolViolation
+
 Reader = Callable[[int], bytes]
 """Reads exactly n bytes (raising on short read) — a socket or a test stub."""
 
@@ -66,16 +68,16 @@ def parse_http_connect_response(raw: bytes) -> HttpConnectResponse:
     head = raw.split(HEADER_TERMINATOR, 1)[0]
     lines = head.split(CRLF)
     if not lines or not lines[0]:
-        raise ValueError("empty HTTP response")
+        raise ProtocolViolation("empty HTTP response")
 
     # status-line: HTTP-version SP status-code SP [reason-phrase]
     parts = lines[0].decode("iso-8859-1").split(" ", 2)
     if len(parts) < 2 or not parts[0].upper().startswith("HTTP/"):
-        raise ValueError(f"malformed HTTP status line: {lines[0]!r}")
+        raise ProtocolViolation(f"malformed HTTP status line: {lines[0]!r}")
     try:
         status = int(parts[1])
     except ValueError as exc:
-        raise ValueError(f"non-numeric HTTP status code: {parts[1]!r}") from exc
+        raise ProtocolViolation(f"non-numeric HTTP status code: {parts[1]!r}") from exc
     reason = parts[2] if len(parts) > 2 else ""
 
     headers: dict[str, str] = {}
@@ -100,7 +102,7 @@ def read_http_response_head(read: Reader) -> bytes:
             raise ConnectionError("proxy closed the connection during the CONNECT response")
         buffer += chunk
         if len(buffer) > 64 * 1024:
-            raise ValueError("HTTP response header block exceeded 64 KiB")
+            raise ProtocolViolation("HTTP response header block exceeded 64 KiB")
     return bytes(buffer)
 
 
@@ -156,17 +158,17 @@ class Socks5Reply:
 def build_socks5_greeting(methods: list[int]) -> bytes:
     """VER, NMETHODS, METHODS... (RFC 1928 §3)."""
     if not 1 <= len(methods) <= 255:
-        raise ValueError("SOCKS5 greeting needs between 1 and 255 methods")
+        raise ConfigurationError("SOCKS5 greeting needs between 1 and 255 methods")
     return bytes([SOCKS5_VERSION, len(methods), *methods])
 
 
 def parse_socks5_method_selection(raw: bytes) -> int:
     """VER, METHOD (RFC 1928 §3). Returns the selected method."""
     if len(raw) != 2:
-        raise ValueError(f"SOCKS5 method selection must be 2 bytes, got {len(raw)}")
+        raise ProtocolViolation(f"SOCKS5 method selection must be 2 bytes, got {len(raw)}")
     version, method = raw[0], raw[1]
     if version != SOCKS5_VERSION:
-        raise ValueError(f"expected SOCKS version 0x05, got 0x{version:02x}")
+        raise ProtocolViolation(f"expected SOCKS version 0x05, got 0x{version:02x}")
     return method
 
 
@@ -180,7 +182,7 @@ def encode_socks5_address(host: str, port: int) -> bytes:
     except ValueError:
         encoded = host.encode("idna") if not host.isascii() else host.encode("ascii")
         if not 1 <= len(encoded) <= 255:
-            raise ValueError("SOCKS5 domain names must be 1-255 bytes") from None
+            raise ConfigurationError("SOCKS5 domain names must be 1-255 bytes") from None
         head = bytes([ATYP_DOMAINNAME, len(encoded)]) + encoded
     else:
         if address.version == 4:
@@ -203,7 +205,7 @@ def build_socks5_userpass_auth(username: str, password: str) -> bytes:
     user = username.encode("utf-8")
     secret = password.encode("utf-8")
     if not 1 <= len(user) <= 255 or not 1 <= len(secret) <= 255:
-        raise ValueError("SOCKS5 username and password must each be 1-255 bytes")
+        raise ConfigurationError("SOCKS5 username and password must each be 1-255 bytes")
     return (
         bytes([AUTH_SUBNEGOTIATION_VERSION, len(user)])
         + user
@@ -215,7 +217,7 @@ def build_socks5_userpass_auth(username: str, password: str) -> bytes:
 def parse_socks5_userpass_result(raw: bytes) -> bool:
     """VER, STATUS — status 0x00 means success (RFC 1929 §2)."""
     if len(raw) != 2:
-        raise ValueError(f"SOCKS5 auth result must be 2 bytes, got {len(raw)}")
+        raise ProtocolViolation(f"SOCKS5 auth result must be 2 bytes, got {len(raw)}")
     return raw[1] == 0x00
 
 
@@ -230,17 +232,21 @@ def read_socks5_reply(read: Reader) -> Socks5Reply:
         raise ConnectionError("short SOCKS5 reply header")
     version, reply_code, _reserved, atyp = header
     if version != SOCKS5_VERSION:
-        raise ValueError(f"expected SOCKS version 0x05 in reply, got 0x{version:02x}")
+        raise ProtocolViolation(f"expected SOCKS version 0x05 in reply, got 0x{version:02x}")
 
     if atyp == ATYP_IPV4:
         host = str(ipaddress.IPv4Address(read(4)))
     elif atyp == ATYP_IPV6:
         host = str(ipaddress.IPv6Address(read(16)))
     elif atyp == ATYP_DOMAINNAME:
-        length = read(1)[0]
-        host = read(length).decode("ascii", errors="replace")
+        # `read` is contracted to raise on a short read, but a reader that
+        # returns b"" instead would make this an IndexError no caller expects.
+        raw_length = read(1)
+        if not raw_length:
+            raise ConnectionError("proxy closed before the SOCKS5 domain length byte")
+        host = read(raw_length[0]).decode("ascii", errors="replace")
     else:
-        raise ValueError(f"unknown SOCKS5 address type 0x{atyp:02x}")
+        raise ProtocolViolation(f"unknown SOCKS5 address type 0x{atyp:02x}")
 
     port = int.from_bytes(read(2), "big")
     return Socks5Reply(reply_code=reply_code, bound_host=host, bound_port=port)

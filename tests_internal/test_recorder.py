@@ -142,3 +142,117 @@ def test_recorder_context_manager_stops_on_exit(patched, tmp_path) -> None:
         patched["sniffer"].prn(_packet())
     assert patched["writer"].closed
     assert not patched["sniffer"].running
+
+
+# --- A sniffer that never started ------------------------------------------
+# Scapy sets AsyncSniffer.running before it opens the socket, so a capture
+# that fails (bad interface, invalid BPF filter) leaves a dead thread with
+# the exception stored on the sniffer, which stop()/join() then re-raise.
+
+
+class _FailedSniffer(_FakeSniffer):
+    """Stands in for a sniffer whose thread died opening the socket."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.running = True  # scapy sets this before the socket is opened
+
+    def stop(self) -> None:
+        raise OSError("No such device exists")
+
+    def join(self) -> None:
+        raise OSError("No such device exists")
+
+
+@pytest.fixture
+def patched_failing(monkeypatch):
+    created = {}
+
+    def make_writer(path, append, sync):
+        writer = _FakeWriter(path, append, sync)
+        created["writer"] = writer
+        return writer
+
+    def make_sniffer(iface, filter, prn, store, count, timeout):
+        sniffer = _FailedSniffer(iface, filter, prn, store, count, timeout)
+        created["sniffer"] = sniffer
+        return sniffer
+
+    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", make_writer)
+    monkeypatch.setattr("src.packet_engine.recorder.AsyncSniffer", make_sniffer)
+    return created
+
+
+def test_a_capture_that_never_started_is_reported_as_a_capture_error(
+    patched_failing, tmp_path
+) -> None:
+    """Raw OSError out of stop() reached the CLI from inside a `finally:`,
+    where it became a traceback with no mention of the interface."""
+    from src.errors import CaptureError, NetstackError
+
+    recorder = PacketRecorder(
+        "nosuchdev0", tmp_path / "c.pcap", bpf_filter="host 10.0.0.5", backend=_StubBackend()
+    )
+    recorder.start()
+
+    with pytest.raises(CaptureError) as caught:
+        recorder.stop()
+
+    assert isinstance(caught.value, NetstackError)  # the CLI boundary renders it
+    assert "nosuchdev0" in str(caught.value)
+    assert "host 10.0.0.5" in str(caught.value)
+
+
+def test_the_writer_is_closed_even_when_stop_fails(patched_failing, tmp_path) -> None:
+    """The old stop() closed the writer after the sniffer call, so a raise
+    leaked it."""
+    recorder = PacketRecorder("nosuchdev0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.start()
+
+    with pytest.raises(Exception):
+        recorder.stop()
+
+    assert patched_failing["writer"].closed
+
+
+def test_the_writer_is_closed_even_when_join_fails(patched_failing, tmp_path) -> None:
+    recorder = PacketRecorder("nosuchdev0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.start(count=10)
+
+    with pytest.raises(Exception):
+        recorder.join()
+
+    assert patched_failing["writer"].closed
+
+
+def test_a_failing_sink_does_not_end_the_capture(patched, tmp_path, caplog) -> None:
+    """A sink raising into the sniffer thread used to end the recording in
+    silence: scapy stores the exception and stops, while the CLI keeps
+    printing "Press Ctrl+C to stop." over a dead sniffer.
+    """
+    recorder = PacketRecorder("dummy0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.subscribe(lambda pkt: (_ for _ in ()).throw(RuntimeError("bad sink")))
+    seen: list = []
+    recorder.subscribe(seen.append)
+    recorder.start()
+
+    sniffer = patched["sniffer"]
+    sniffer.prn(_packet())
+    sniffer.prn(_packet())
+
+    assert recorder.packet_count == 2, "frames must still be counted"
+    assert len(patched["writer"].written) == 2, "frames must still reach the pcap"
+    assert len(seen) == 2, "a later sink must still run"
+
+
+def test_a_frame_after_close_is_dropped_not_crashed(patched, tmp_path) -> None:
+    """The old guard was an `assert`, which `python -O` strips — leaving
+    AttributeError on NoneType, on the sniffer thread."""
+    recorder = PacketRecorder("dummy0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.start()
+    sniffer = patched["sniffer"]
+    recorder.stop()
+
+    sniffer.prn(_packet())  # a frame in flight when the capture closed
+
+    assert recorder.packet_count == 0

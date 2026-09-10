@@ -54,7 +54,6 @@ def test_config_round_trip_covers_every_field() -> None:
         target_port=8080,
         source_port=41000,
         timeout=9.5,
-        retries=7,
         role=Role.SERVER,
         proxy_leg=ProxyLeg.FRONT,
         allowed_targets=("10.0.0.0/24",),
@@ -262,3 +261,78 @@ def test_request_cannot_disagree_with_its_config_about_role_or_leg() -> None:
     request = RunRequest(config=config)
     assert request.role is config.role
     assert request.proxy_leg == ProxyLeg.BACK.value
+
+
+def test_inducer_summary_breaks_failures_down_by_type() -> None:
+    """When nothing was induced, every server-role timeout in the run has
+    this same root cause — so the teardown line has to say which. Keeping
+    only the last error meant thousands of identical failures reported one
+    string, and a transient refusal read like a permanent misconfiguration.
+    """
+    import socket
+
+    from src.proxy.config import ProxyConfig, ProxyMode
+    from src.proxy.inducer import TrafficInducer
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    dead_port = probe.getsockname()[1]
+    probe.close()
+
+    config = ProxyConfig(
+        mode=ProxyMode.TRANSPARENT,
+        backend_host="127.0.0.1",
+        backend_port=dead_port,
+        timeout=0.5,
+    )
+    inducer = TrafficInducer(config, interval=0.01)
+    with inducer:
+        _wait_until(lambda: inducer.attempts >= 3, timeout=3.0)
+
+    summary = inducer.summary()
+    assert "failures:" in summary
+    assert "x" in summary  # "<ExceptionName>x<count>"
+    assert "last:" in summary
+
+
+def test_inducer_backs_off_after_a_run_of_failures() -> None:
+    """At 4Hz an unreachable backend otherwise burns a whole session of
+    connect attempts against something that will never answer."""
+    import src.proxy.inducer as inducer_mod
+    from src.proxy.config import ProxyConfig, ProxyMode
+    from src.proxy.inducer import TrafficInducer
+
+    waits: list[float] = []
+
+    class _AlwaysFails:
+        def __init__(self, config) -> None:
+            pass
+
+        def __enter__(self):
+            raise ConnectionRefusedError("nothing listening")
+
+        def __exit__(self, *exc_info) -> None:
+            pass
+
+    monkeypatch_target = inducer_mod.ProxyClient
+    inducer_mod.ProxyClient = _AlwaysFails
+    try:
+        config = ProxyConfig(
+            mode=ProxyMode.TRANSPARENT, backend_host="127.0.0.1", backend_port=1, timeout=0.1
+        )
+        inducer = TrafficInducer(config, interval=0.001)
+        original_wait = inducer._stop.wait
+
+        def recording_wait(timeout=None):
+            if timeout is not None:
+                waits.append(timeout)
+            return original_wait(timeout)
+
+        inducer._stop.wait = recording_wait  # type: ignore[method-assign]
+        with inducer:
+            _wait_until(lambda: inducer.attempts >= 15, timeout=5.0)
+    finally:
+        inducer_mod.ProxyClient = monkeypatch_target
+
+    assert inducer.successes == 0
+    assert max(waits) > inducer.interval, "the loop never backed off"

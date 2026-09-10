@@ -2,15 +2,26 @@
 run and shows the resulting output path."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.reporting import formats
 from src.reporting.formats import ReportFormat
 from src.reporting.models import TestRunResult
 from src.run_artifacts import RunArtifacts
 from src.runner import reports_dir
+
+log = logging.getLogger(__name__)
 
 
 class ReportPanel(QWidget):
@@ -62,6 +73,22 @@ class ReportPanel(QWidget):
             str(default_path),
             f"{fmt.label} files (*.{fmt.key})",
         )
-        if path_str:
+        if not path_str:
+            return
+        try:
             output = fmt.generate(self._result, Path(path_str))
-            self._status_label.setText(f"{fmt.label} written to {output}")
+        except Exception as exc:
+            # This is a `clicked` slot, and the save dialog lets the operator
+            # pick any destination — including one they can't write to. An
+            # exception leaving here reaches sys.excepthook and takes the
+            # window with it, over a failed export of a run whose data is
+            # already safely on disk.
+            log.exception("Report export failed")
+            self._status_label.setText(f"Could not write the {fmt.label} report: {exc}")
+            QMessageBox.warning(
+                self,
+                f"{fmt.label} export failed",
+                f"{exc}\n\nThe run's data is unaffected — try a different location.",
+            )
+            return
+        self._status_label.setText(f"{fmt.label} written to {output}")

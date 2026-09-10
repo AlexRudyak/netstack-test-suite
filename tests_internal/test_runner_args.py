@@ -14,6 +14,7 @@ from src.reporting.models import TestOutcome, TestRunResult
 from src.runner import (
     RunRequest,
     build_pytest_args,
+    drain_packet_events,
     drain_test_events,
     parse_report_log_line,
     read_new_lines,
@@ -419,6 +420,83 @@ def test_drain_test_events_appends_and_calls_back(tmp_path: Path) -> None:
     assert len(result.tests) == 1
     assert len(seen) == 1
     assert offset > 0
+
+
+# --- Malformed input: one bad line must not cost the run ------------------
+# Both drains tail a file the pytest subprocess is still appending to, so a
+# truncated or interleaved line is a property of the medium, not a bug.
+# Letting it raise aborted stream_run with the subprocess still running and
+# no results.json written, and in the GUI it left a QTimer slot.
+
+
+def test_drain_test_events_skips_a_truncated_line(tmp_path: Path) -> None:
+    path = tmp_path / "report_log.jsonl"
+    truncated = '{"$report_type": "TestReport", "when": "cal'
+    survivor = _report_log_line(nodeid="tests/x.py::survivor")
+    path.write_text(f"{truncated}\n{survivor}\n", encoding="utf-8")
+
+    result = _run_result()
+    drain_test_events(path, 0, result, None)
+
+    assert [t.nodeid for t in result.tests] == ["tests/x.py::survivor"]
+
+
+def test_drain_test_events_skips_a_non_object_line(tmp_path: Path) -> None:
+    """Valid JSON that isn't a report object — `data.get` would raise."""
+    path = tmp_path / "report_log.jsonl"
+    path.write_text(f"[1, 2, 3]\n{_report_log_line()}\n", encoding="utf-8")
+
+    result = _run_result()
+    drain_test_events(path, 0, result, None)
+
+    assert result.total == 1
+
+
+def _packet_event_line(**overrides) -> str:
+    base = {
+        "timestamp": 1000.0,
+        "direction": "sent",
+        "summary": "Ether / IP / TCP",
+        "size_bytes": 54,
+        "test_nodeid": "tests/x.py::t",
+    }
+    base.update(overrides)
+    return json.dumps(base)
+
+
+def test_drain_packet_events_skips_a_line_missing_a_field(tmp_path: Path) -> None:
+    path = tmp_path / "packet_events.jsonl"
+    incomplete = json.dumps({"timestamp": 1.0})
+    path.write_text(f"{incomplete}\n{_packet_event_line()}\n", encoding="utf-8")
+
+    result = _run_result()
+    seen = []
+    drain_packet_events(path, 0, result, seen.append)
+
+    assert len(result.packet_events) == 1
+    assert len(seen) == 1
+
+
+def test_drain_packet_events_skips_an_unknown_direction(tmp_path: Path) -> None:
+    """PacketDirection("sideways") raises ValueError, not KeyError."""
+    path = tmp_path / "packet_events.jsonl"
+    bad = _packet_event_line(direction="sideways")
+    path.write_text(f"{bad}\n{_packet_event_line()}\n", encoding="utf-8")
+
+    result = _run_result()
+    drain_packet_events(path, 0, result, None)
+
+    assert len(result.packet_events) == 1
+
+
+def test_a_malformed_line_still_advances_the_offset(tmp_path: Path) -> None:
+    """Otherwise the next poll re-reads the same bad line forever."""
+    path = tmp_path / "packet_events.jsonl"
+    path.write_text("{oops\n", encoding="utf-8")
+
+    offset = drain_packet_events(path, 0, _run_result(), None)
+
+    assert offset == path.stat().st_size
 
 
 # --- pytest_returncode / errored ------------------------------------------

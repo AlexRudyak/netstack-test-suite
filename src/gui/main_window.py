@@ -3,6 +3,8 @@ log panel, and report export — plus a Custom Packet tab for ad-hoc sends.
 """
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,6 +47,7 @@ from src.reporting.models import PacketEvent, TestEvent, TestRunResult
 from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest
 from src.target_profiles import list_profiles
+from src.utils.permissions import remediation_message
 
 
 class MainWindow(QMainWindow):
@@ -57,11 +60,15 @@ class MainWindow(QMainWindow):
         # Chosen once, the first time a run leaves the destination port unset,
         # then reused for the rest of the session.
         self._session_random_dst_port: int | None = None
+        # Set when the runner process failed to launch, so the generic
+        # "no tests ran" line doesn't follow the specific reason.
+        self._launch_failed = False
         self._controller = RunController(self)
         self._controller.test_event.connect(self._on_test_event)
         self._controller.packet_event.connect(self._on_packet_event)
         self._controller.output_line.connect(self._on_output_line)
         self._controller.finished.connect(self._on_finished)
+        self._controller.failed.connect(self._on_launch_failed)
 
         self._build_ui()
 
@@ -88,7 +95,13 @@ class MainWindow(QMainWindow):
         form = QFormLayout(box)
 
         self._iface_combo = QComboBox()
-        self._iface_combo.addItems(_list_interface_names())
+        interface_names = _list_interface_names()
+        self._iface_combo.addItems(interface_names)
+        if not interface_names:
+            # Say why the list is empty where the operator is looking, rather
+            # than letting the preflight report a missing field later.
+            self._iface_combo.setPlaceholderText("No interfaces found — see tooltip")
+            self._iface_combo.setToolTip(remediation_message())
         self._target_ip = QLineEdit()
         self._target_mac = QLineEdit()
         self._src_port = QSpinBox()
@@ -246,6 +259,7 @@ class MainWindow(QMainWindow):
         self._metrics.clear()
         self._plot.reset()
         self._log_panel.clear_log()
+        self._launch_failed = False
         # Surface progress/errors as text — the Log tab is where the run
         # actually reports what happened (a blank Live plot was exactly why
         # a failed run looked like "nothing happened").
@@ -357,8 +371,20 @@ class MainWindow(QMainWindow):
     def _on_output_line(self, line: str) -> None:
         self._log_panel.append_line(line)
 
+    def _on_launch_failed(self, message: str) -> None:
+        """The runner process never started. Nothing else will report it —
+        a QProcess that fails to start emits no `finished`."""
+        self._launch_failed = True
+        self._log_panel.append_line(message)
+        self._log_panel.append_line(
+            "No tests were run. Check that the Python interpreter and the test "
+            "tree are reachable from the project directory."
+        )
+
     def _on_finished(self, result: TestRunResult) -> None:
         self._report_panel.set_result(result)
+        if self._launch_failed:
+            return  # _on_launch_failed already said what went wrong
         if result.errored:
             self._log_panel.append_line(
                 f"pytest exited with code {result.pytest_returncode} "
@@ -401,9 +427,18 @@ def _split_host_port(text: str) -> tuple[str | None, int | None]:
 
 
 def _list_interface_names() -> list[str]:
+    """Working interfaces, or an empty list with the reason recorded.
+
+    An empty combo box here almost always means the packet driver is missing
+    (Npcap on Windows). Discarding the exception made that read to the
+    operator as "you forgot to pick an interface": the config check reports
+    `Missing required configuration: Interface`, which names the field
+    rather than the cause.
+    """
     try:
         from scapy.interfaces import get_working_ifaces
 
         return [iface.name for iface in get_working_ifaces()]
     except Exception:
+        logging.getLogger(__name__).exception("Could not enumerate network interfaces")
         return []

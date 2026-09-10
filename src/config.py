@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from typing import ClassVar, Literal
 
+from src.errors import ConfigurationError
+
 # The profile names src/target_profiles/ ships. Kept as a Literal for type
 # checking; `target_profiles.list_profiles()` is the runtime source both
 # front ends build their choice lists from, so the two can't drift.
@@ -160,7 +162,13 @@ class DUTConfig:
     # (the historical behavior: per-test counters / hardcoded ports).
     source_port: int | None = None
     timeout: float = 2.0
-    retries: int = 2
+    # There is deliberately no `retries` field. A conformance suite that
+    # silently retries hides the defect it exists to find: a DUT that answers
+    # the second probe but not the first has a bug, and a retry would report
+    # it as a pass. The tests that legitimately repeat (the congestion and
+    # flood suites) loop explicitly, where the count is part of the
+    # assertion. One was declared here for a long time and never read by any
+    # production code, which told every reader of this object the opposite.
     role: Role = Role.CLIENT
     # Set when the target is one leg of a proxy DUT rather than an endpoint.
     # Purely descriptive here — the addressing is already resolved into
@@ -192,13 +200,35 @@ class DUTConfig:
         ]
 
     def target_in_allowed_range(self) -> bool:
+        """Whether the target falls inside any authorized CIDR.
+
+        Both parses raise ConfigurationError rather than the bare ValueError
+        ipaddress produces. `--dut-ip` and `--allowed-target` are free text,
+        so a typo is ordinary operator input — and the only caller is the
+        vuln safety gate, where an unhandled ValueError made every
+        `vuln`-marked test ERROR with a message about network syntax instead
+        of naming the flag to fix. It fails closed either way; this decides
+        what the operator is told.
+        """
         if not self.allowed_targets:
             return False
-        addr = ipaddress.ip_address(self.target_ip)
-        return any(
-            addr in ipaddress.ip_network(cidr, strict=False)
-            for cidr in self.allowed_targets
-        )
+        try:
+            addr = ipaddress.ip_address(self.target_ip)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Target {self.target_ip!r} is not an IP address, so it cannot be "
+                "checked against the vuln-test allow-list."
+            ) from exc
+        for cidr in self.allowed_targets:
+            try:
+                network = ipaddress.ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ConfigurationError(
+                    f"Allowed target {cidr!r} is not a valid CIDR range: {exc}"
+                ) from exc
+            if addr in network:
+                return True
+        return False
 
     # --- serialization ------------------------------------------------------
     # Derived from `fields()` rather than written out field-by-field: the

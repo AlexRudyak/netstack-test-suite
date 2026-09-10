@@ -257,6 +257,59 @@ def test_http_connect_refusal_raises_with_status(backend) -> None:
             ProxyClient(_config(backend, ProxyMode.HTTP_CONNECT, proxy.port)).connect()
 
 
+@pytest.mark.parametrize(
+    ("mode", "match"),
+    [(ProxyMode.SOCKS5, "connection refused"), (ProxyMode.HTTP_CONNECT, "403")],
+)
+def test_a_refused_tunnel_releases_the_socket(backend, mode, match) -> None:
+    """A refusal is the expected outcome for the conformance tests, and
+    TrafficInducer reconnects every 250ms for a whole session — so a socket
+    leaked per refusal exhausted the fd limit on exactly the runs that have
+    to work. `connect()` IS `__enter__`, so a raise there means `__exit__`
+    never runs and connect() itself has to close.
+    """
+    with StubProxy(mode, fail=True) as proxy:
+        client = ProxyClient(_config(backend, mode, proxy.port))
+        with pytest.raises(ProxyTunnelError, match=match):
+            client.connect()
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            client.socket  # noqa: B018 - the property is the assertion
+
+
+def test_a_refused_tunnel_still_records_what_the_dut_reported(backend) -> None:
+    """Closing the socket must not cost the details the refusal-conformance
+    assertions read."""
+    with StubProxy(ProxyMode.HTTP_CONNECT, fail=True) as proxy:
+        client = ProxyClient(_config(backend, ProxyMode.HTTP_CONNECT, proxy.port))
+        with pytest.raises(ProxyTunnelError):
+            client.connect()
+
+        assert client.details is not None
+        assert client.details.status == 403
+
+
+def test_a_non_tunnel_error_also_releases_the_socket(backend, monkeypatch) -> None:
+    """The old handler caught only ProxyTunnelError, so a ConnectionError or
+    a protocol ValueError from tunnel.py leaked the socket identically."""
+    from src.proxy import handshakes
+
+    class _Exploding:
+        def establish(self, sock, read, origin):
+            raise ConnectionError("proxy closed mid-handshake")
+
+    monkeypatch.setattr(handshakes, "for_config", lambda cfg: _Exploding())
+
+    with StubProxy(ProxyMode.SOCKS5) as proxy:
+        client = ProxyClient(_config(backend, ProxyMode.SOCKS5, proxy.port))
+        with pytest.raises(ConnectionError):
+            client.connect()
+
+        assert client.details is None
+        with pytest.raises(RuntimeError, match="not connected"):
+            client.socket  # noqa: B018 - the property is the assertion
+
+
 def test_explicit_mode_requires_a_front_address(backend) -> None:
     with pytest.raises(ValueError, match="explicit proxy mode"):
         ProxyConfig(mode=ProxyMode.SOCKS5, backend_host=LOOPBACK, backend_port=1)
@@ -287,3 +340,59 @@ def test_transparent_mode_reports_no_tunnel_details(backend) -> None:
     with ProxyClient(_config(backend, ProxyMode.TRANSPARENT, backend.bound_port)) as client:
         assert client.details is None
         assert client.roundtrip(b"inline") == b"inline"
+
+
+# --- Backend start is all-or-nothing ----------------------------------------
+
+
+def test_a_failed_udp_bind_leaves_no_tcp_listener_behind() -> None:
+    """start() used to bind TCP, spawn its accept loop, and only then bind
+    UDP — so a UDP bind failure left a live listener with a running thread
+    that the caller never got a reference to. Only process exit could
+    reclaim the port.
+    """
+    import socket as socket_module
+    import threading
+
+    # Hold the UDP side of an ephemeral port so the backend's UDP bind fails
+    # after its TCP bind has already succeeded.
+    squatter = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_DGRAM)
+    squatter.bind((LOOPBACK, 0))
+    port = squatter.getsockname()[1]
+
+    before = threading.active_count()
+    backend = EchoBackend(LOOPBACK, port, enable_udp=True)
+    try:
+        with pytest.raises(OSError):
+            backend.start()
+
+        # The TCP port must be free: binding it again is the proof.
+        probe = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_STREAM)
+        try:
+            probe.bind((LOOPBACK, port))
+        finally:
+            probe.close()
+
+        assert threading.active_count() == before, "an accept loop outlived the failed start"
+    finally:
+        backend.stop()
+        squatter.close()
+
+
+def test_a_backend_can_be_restarted_after_stop() -> None:
+    """stop() latches the _stop event the serving loops read, so start()
+    has to clear it or a restarted backend accepts nothing."""
+    backend = EchoBackend(LOOPBACK, 0)
+    backend.start()
+    first_port = backend.bound_port
+    backend.stop()
+
+    backend.start()
+    try:
+        with socket.create_connection((LOOPBACK, backend.bound_port), timeout=2.0) as conn:
+            conn.sendall(b"restarted")
+            assert conn.recv(64) == b"restarted"
+    finally:
+        backend.stop()
+
+    assert first_port  # the first bind really did happen

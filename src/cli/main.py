@@ -9,6 +9,8 @@ both front ends use).
 """
 from __future__ import annotations
 
+import ipaddress
+import logging
 import sys
 import time
 from pathlib import Path
@@ -29,6 +31,7 @@ from src.config import (
 )
 from src.custom_packet.builder import CustomPacketSpec, Proto
 from src.custom_packet.sender import send_custom_packet
+from src.errors import NetstackError
 from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 from src.packet_engine.preflight import run_preflight
 from src.packet_engine.recorder import PacketRecorder, build_host_filter
@@ -39,6 +42,8 @@ from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest, run_tests
 from src.target_profiles import list_profiles
 from src.utils.logging_config import configure_logging
+
+log = logging.getLogger(__name__)
 
 
 # Derived from the catalog (which tests_internal AST-checks against the real
@@ -57,10 +62,56 @@ SHARED_OPTIONS = shared_options(
 )
 
 
-@click.group()
-def cli() -> None:
+class NetstackCLI(click.Group):
+    """Renders a deliberate failure as a message; a bug keeps its traceback.
+
+    Without this every operational error — an unparseable --payload-hex, an
+    unreadable --payload-file, a bad interface name reaching Scapy — reached
+    the operator as a raw Python traceback naming neither the flag at fault
+    nor what to do about it.
+
+    The catch is deliberately narrow. `NetstackError` means this package
+    decided the run cannot proceed and knows why; anything else escaping to
+    here is a bug, and hiding a bug's traceback behind a tidy one-line
+    message would cost more than it saves.
+    """
+
+    def invoke(self, ctx: click.Context) -> object:
+        try:
+            return super().invoke(ctx)
+        except NetstackError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            raise SystemExit(exc.exit_code) from None
+
+
+@click.group(cls=NetstackCLI)
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="DEBUG-level application logging. Distinct from `run --debug`, which "
+    "writes the per-packet tshark-style trace for a run.",
+)
+def cli(verbose: bool) -> None:
     """Network Stack Test Suite — RFC conformance & vulnerability testing over Ethernet."""
-    configure_logging()
+    configure_logging(logging.DEBUG if verbose else logging.INFO)
+
+
+def _validate_cidrs(ctx, param, value: tuple[str, ...]) -> tuple[str, ...]:
+    """Reject a malformed CIDR at parse time.
+
+    The allow-list is only read once a `vuln`-marked test is about to run,
+    which on a long suite is many minutes in — so a typo here used to abort
+    the run at the worst possible moment. Click reports it before anything
+    starts.
+    """
+    for cidr in value:
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError as exc:
+            raise click.BadParameter(f"{cidr!r} is not a valid CIDR range: {exc}") from exc
+    return value
 
 
 def _resolve_topology(
@@ -105,7 +156,18 @@ def _resolve_topology(
 
 
 def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
-    """Print the run's outcome, write the report, and return the exit code."""
+    """Print the run's outcome, write the report, and return the exit code.
+
+    Report generation is best-effort on purpose. By the time this runs the
+    tests have already executed against the DUT, and a run can take an hour
+    — so a reportlab or matplotlib failure (no write permission on reports/,
+    a full disk, a font problem) must not cost the operator the verdict.
+    It used to: the exception left this function before the `return`, so the
+    process exited on a traceback instead of the run's real pass/fail code.
+
+    results.json is already on disk by then, written by runner.finalize_run,
+    so the report can be regenerated without touching the DUT again.
+    """
     artifacts = RunArtifacts(run_dir)
     if result.errored:
         # pytest itself failed to run the tests (collection/usage error,
@@ -129,7 +191,17 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
         click.echo(f"Debug log: {artifacts.debug_log}")
     fmt = formats.BY_KEY.get(report)
     if fmt is not None:
-        click.echo(f"{fmt.label} report: {fmt.generate(result, artifacts.report(fmt.key))}")
+        try:
+            output = fmt.generate(result, artifacts.report(fmt.key))
+            click.echo(f"{fmt.label} report: {output}")
+        except Exception as exc:
+            log.exception("Report generation failed")
+            click.echo(
+                f"Could not write the {fmt.label} report: {exc}\n"
+                f"The run itself completed — its data is in {artifacts.results}, "
+                "and the report can be regenerated from it without re-testing.",
+                err=True,
+            )
 
     return 1 if (result.failed or result.errors) else 0
 
@@ -143,7 +215,13 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
 @click.option("--dut-ip", required=True)
 @click.option("--target-stack", type=click.Choice(list_profiles()), required=True)
 @shared_click_options(SHARED_OPTIONS)
-@click.option("--allowed-target", "allowed_targets", multiple=True, help="CIDR authorized for vuln-marked tests.")
+@click.option(
+    "--allowed-target",
+    "allowed_targets",
+    multiple=True,
+    callback=_validate_cidrs,
+    help="CIDR authorized for vuln-marked tests.",
+)
 @click.option("--confirm-vuln-tests", is_flag=True, default=False)
 @click.option(
     "--debug",
@@ -316,9 +394,12 @@ def send(
         spec, iface, timeout=timeout, capture_path=Path(capture_path) if capture_path else None
     )
     if reply is None:
-        click.echo("No reply received within timeout.")
-    else:
-        click.echo(reply.summary())
+        # Exit non-zero: a script driving this cannot otherwise distinguish
+        # "the DUT answered" from "the DUT said nothing", which is the only
+        # thing this command exists to find out.
+        click.echo("No reply received within timeout.", err=True)
+        raise SystemExit(1)
+    click.echo(reply.summary())
 
 
 @cli.command()
@@ -382,9 +463,15 @@ def record(
                 time.sleep(0.5)
     except KeyboardInterrupt:
         click.echo("\nStopping…")
-    finally:
-        written = recorder.stop()
-        click.echo(f"Wrote {written} packet(s) to {output_path}")
+
+    # Deliberately not in a `finally:`. stop() reports a sniffer that never
+    # started (bad interface, invalid BPF filter) by raising, and an
+    # exception escaping a finally clause would suppress the count line and
+    # replace the Ctrl+C path's clean exit with whatever it carries. The
+    # capture file is already valid on disk either way — PcapWriter flushes
+    # per frame — so there is nothing here that must run on the error path.
+    written = recorder.stop()
+    click.echo(f"Wrote {written} packet(s) to {output_path}")
 
 
 @cli.command("proxy-serve")
@@ -426,11 +513,14 @@ def proxy_serve(listen_host: str, listen_port: int, udp: bool) -> None:
         backend.stop()
         click.echo(stats.summary())
         if not stats.tcp_connections and not stats.udp_datagrams:
+            # Already detected and reported; it must also be the exit code,
+            # or a CI job wrapping this reads a silent backend as a pass.
             click.echo(
                 "No connections were received — the DUT never dialled this backend. "
                 "Check the proxy's upstream/origin configuration and routing.",
                 err=True,
             )
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -386,9 +386,12 @@ def send(
         spec, iface, timeout=timeout, capture_path=Path(capture_path) if capture_path else None
     )
     if reply is None:
-        click.echo("No reply received within timeout.")
-    else:
-        click.echo(reply.summary())
+        # Exit non-zero: a script driving this cannot otherwise distinguish
+        # "the DUT answered" from "the DUT said nothing", which is the only
+        # thing this command exists to find out.
+        click.echo("No reply received within timeout.", err=True)
+        raise SystemExit(1)
+    click.echo(reply.summary())
 
 
 @cli.command()
@@ -502,11 +505,14 @@ def proxy_serve(listen_host: str, listen_port: int, udp: bool) -> None:
         backend.stop()
         click.echo(stats.summary())
         if not stats.tcp_connections and not stats.udp_datagrams:
+            # Already detected and reported; it must also be the exit code,
+            # or a CI job wrapping this reads a silent backend as a pass.
             click.echo(
                 "No connections were received — the DUT never dialled this backend. "
                 "Check the proxy's upstream/origin configuration and routing.",
                 err=True,
             )
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -420,3 +420,31 @@ def test_a_failing_report_points_at_the_data_that_survived(
     cli_main._emit_results(stub_result, tmp_path, report="pdf", debug=False)
 
     assert "results.json" in capsys.readouterr().err
+
+
+# --- Exit codes -----------------------------------------------------------
+# Only `run` set one. The other commands fell off the end of their function
+# and exited 0, so a script could not tell success from the exact condition
+# each command exists to detect.
+
+
+def test_send_exits_non_zero_when_nothing_replies(monkeypatch) -> None:
+    monkeypatch.setattr(cli_main, "send_custom_packet", lambda *a, **k: None)
+
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "probe"))
+
+    assert result.exit_code == 1
+    assert "No reply received" in result.output
+
+
+def test_send_exits_zero_when_the_dut_answers(monkeypatch) -> None:
+    class _Reply:
+        def summary(self) -> str:
+            return "Ether / IP / TCP 10.0.0.5:80 > 10.0.0.1:1234 SA"
+
+    monkeypatch.setattr(cli_main, "send_custom_packet", lambda *a, **k: _Reply())
+
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "probe"))
+
+    assert result.exit_code == 0
+    assert "SA" in result.output

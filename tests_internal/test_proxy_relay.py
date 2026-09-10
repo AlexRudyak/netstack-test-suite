@@ -340,3 +340,59 @@ def test_transparent_mode_reports_no_tunnel_details(backend) -> None:
     with ProxyClient(_config(backend, ProxyMode.TRANSPARENT, backend.bound_port)) as client:
         assert client.details is None
         assert client.roundtrip(b"inline") == b"inline"
+
+
+# --- Backend start is all-or-nothing ----------------------------------------
+
+
+def test_a_failed_udp_bind_leaves_no_tcp_listener_behind() -> None:
+    """start() used to bind TCP, spawn its accept loop, and only then bind
+    UDP — so a UDP bind failure left a live listener with a running thread
+    that the caller never got a reference to. Only process exit could
+    reclaim the port.
+    """
+    import socket as socket_module
+    import threading
+
+    # Hold the UDP side of an ephemeral port so the backend's UDP bind fails
+    # after its TCP bind has already succeeded.
+    squatter = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_DGRAM)
+    squatter.bind((LOOPBACK, 0))
+    port = squatter.getsockname()[1]
+
+    before = threading.active_count()
+    backend = EchoBackend(LOOPBACK, port, enable_udp=True)
+    try:
+        with pytest.raises(OSError):
+            backend.start()
+
+        # The TCP port must be free: binding it again is the proof.
+        probe = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_STREAM)
+        try:
+            probe.bind((LOOPBACK, port))
+        finally:
+            probe.close()
+
+        assert threading.active_count() == before, "an accept loop outlived the failed start"
+    finally:
+        backend.stop()
+        squatter.close()
+
+
+def test_a_backend_can_be_restarted_after_stop() -> None:
+    """stop() latches the _stop event the serving loops read, so start()
+    has to clear it or a restarted backend accepts nothing."""
+    backend = EchoBackend(LOOPBACK, 0)
+    backend.start()
+    first_port = backend.bound_port
+    backend.stop()
+
+    backend.start()
+    try:
+        with socket.create_connection((LOOPBACK, backend.bound_port), timeout=2.0) as conn:
+            conn.sendall(b"restarted")
+            assert conn.recv(64) == b"restarted"
+    finally:
+        backend.stop()
+
+    assert first_port  # the first bind really did happen

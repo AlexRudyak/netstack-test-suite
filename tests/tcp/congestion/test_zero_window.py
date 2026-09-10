@@ -22,8 +22,10 @@ RST = 0x04
 
 def _handshake(network_interface, dut_config, local_mac, dut_mac, local_ip, sport):
     tracker = TCPSequenceTracker.new()
+
+    syn_seq = tracker.on_send(0, syn=True)  # advance past our SYN: next seq is ISN+1
     syn = wrap_ethernet(
-        build_tcp(local_ip, dut_config.target_ip, sport, dut_config.target_port, flags="S", seq=tracker.seq),
+        build_tcp(local_ip, dut_config.target_ip, sport, dut_config.target_port, flags="S", seq=syn_seq),
         local_mac,
         dut_mac,
     )
@@ -31,6 +33,18 @@ def _handshake(network_interface, dut_config, local_mac, dut_mac, local_ip, spor
     assert syn_ack is not None and syn_ack.haslayer(TCP)
     assert syn_ack[TCP].flags & (SYN | ACK) == (SYN | ACK), "handshake did not reach SYN-ACK"
     tracker.on_receive(syn_ack[TCP].seq, 0, syn=True)
+
+    # Complete the three-way handshake with the final ACK, or the DUT stays
+    # in SYN-RECEIVED and every later segment is a bad-seq challenge / RST.
+    ack = wrap_ethernet(
+        build_tcp(
+            local_ip, dut_config.target_ip, sport, dut_config.target_port,
+            flags="A", seq=tracker.seq, ack=tracker.ack,
+        ),
+        local_mac,
+        dut_mac,
+    )
+    network_interface.send(ack, test_nodeid="zero_window")
     return tracker
 
 

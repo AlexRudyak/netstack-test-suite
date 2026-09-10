@@ -84,6 +84,26 @@ def test_proxy_topology_is_passed_through(tmp_path: Path) -> None:
     assert "--backend-port=9099" in args
 
 
+def test_allowed_targets_are_forwarded_to_subprocess(tmp_path: Path) -> None:
+    """The vuln-test allow-list lives on the DUTConfig; if build_pytest_args
+    drops it, every vuln-marked test raises UnauthorizedTargetError in the
+    subprocess even though the operator authorized the target."""
+    config = DUTConfig(
+        interface="eth0",
+        target_ip="192.168.1.254",
+        target_stack="linux",
+        allowed_targets=("192.168.1.0/24", "10.0.0.5/32"),
+    )
+    args = build_pytest_args(RunRequest(config=config), tmp_path)
+    assert "--allowed-targets=192.168.1.0/24" in args
+    assert "--allowed-targets=10.0.0.5/32" in args
+
+
+def test_allowed_targets_omitted_when_empty(tmp_path: Path) -> None:
+    args = build_pytest_args(RunRequest(config=_config()), tmp_path)
+    assert not any(a.startswith("--allowed-targets") for a in args)
+
+
 def test_proxy_options_omitted_when_mode_unset(tmp_path: Path) -> None:
     args = build_pytest_args(RunRequest(config=_config()), tmp_path)
     assert not any(a.startswith("--proxy-mode") for a in args)

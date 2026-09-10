@@ -164,6 +164,12 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
         args += ["-m", " and ".join(request.markers)]
     if request.confirm_vuln_tests:
         args.append("--confirm-vuln-tests")
+    # The allow-list gates every `vuln`-marked test (src/utils/safety.py),
+    # and it lives on the DUTConfig — forward each CIDR to the subprocess or
+    # those tests error out with UnauthorizedTargetError despite the operator
+    # having authorized the target. conftest's --allowed-targets is append.
+    for cidr in request.config.allowed_targets:
+        args.append(f"--allowed-targets={cidr}")
     if request.debug:
         args.append(f"--debug-log={run_dir / 'debug.log'}")
     if request.proxy_mode:

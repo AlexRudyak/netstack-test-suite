@@ -9,6 +9,80 @@
 
 ---
 
+## Status: 14 of 16 findings applied; 2 are "no action" by design
+
+Every actionable finding was applied on branch `development`, in the
+priority order this report set out. F-15 and F-16 are no-action entries by
+design. Each finding below keeps its original analysis and remediation snippet, so the record of *what was wrong and why*
+survives alongside the fix.
+
+Verification after the final change:
+
+- `pytest tests_internal/ -q` -> **220 passed** (193 originally, plus 27 new
+  tests covering the extracted structure)
+- `pytest --collect-only -q` -> **301 collected**, no import errors
+- `ruff check .` -> clean, `C901` still enforced at max-complexity 10
+
+| Finding | Commit | Note |
+|---|---|---|
+| F-03 RunRequest/DUTConfig shadow fields | `ac078de` | |
+| F-01 RunArtifacts repository | `de9ff75` | new `src/run_artifacts.py` |
+| F-02 Derived result serialization | `b295eb0` | old guard verified to miss a dropped field |
+| F-13 Report format registry | `581c699` | new `src/reporting/formats.py` |
+| F-07 Proxy package facade deleted | `7932498` | + an import-cycle DFS guard |
+| F-06 Palette out of the domain model | `0e65ef8` | new `src/reporting/palette.py` |
+| F-08 DUTConfig Active Record removed | `aa36f02` | |
+| F-14 Packet sink list | `cfededb` | pcap/debug deliberately not sinks |
+| F-05 `Proto` enum | `b5775fb` | enum only; no dispatch table |
+| F-09 `RECV_CHUNK` moved to config | `07fdc78` | |
+| F-10 Catalog suffix index | `2aae15f` | |
+| F-12 Tunnel handshake Strategy | `84b73ac` | new `src/proxy/handshakes.py` |
+| F-04 Payload generator table | `1d30c0a` | |
+| F-11 Socket backends collapsed | `0bee0d2` | Protocol kept; 3 tests added |
+| F-15 Lifecycle base class | — | **no action**, as recommended |
+| F-16 Service layer / DTOs / value objects | — | **no action**, measured healthy |
+
+### Where the remediation differed from what this report proposed
+
+Three findings were resolved differently once the code was in hand, and
+the reasoning is worth keeping:
+
+- **F-06.** The report offered two ways to settle the unread `"prefix"`
+  column: delete it, or wire it into `TestEvent.summary_line`. Wiring it up
+  would have made `models.py` import `palette.py` — the exact edge the
+  split exists to remove — so the column was deleted.
+- **F-07.** The report claimed the import-cycle DFS would guard this. It
+  does not: the submodule import form (`import src.proxy.tunnel as tunnel`)
+  dodges the graph, which is precisely what made the original cycle
+  survivable. Both guards ship — the DFS for future cycles, an AST check on
+  `proxy/__init__.py` for this one.
+- **F-02.** The report marked the strength of the existing round-trip test
+  "unable to verify". It was verified: five assertions, none of which catch
+  a dropped field. The replacement was checked against a deliberately
+  broken serializer before being committed.
+
+### New modules created in the process
+
+| Module | Replaces |
+|---|---|
+| `src/run_artifacts.py` | 8 filenames as literals across 5 modules; the split `results.json` write/read |
+| `src/reporting/formats.py` | the format list in 4 places; `_export_pdf`/`_export_html` |
+| `src/reporting/palette.py` | `OUTCOME_STYLE` living on the result model |
+| `src/proxy/handshakes.py` | `ProxyClient`'s mode branch, its two private handshakes, and `TunnelDetails` |
+
+### New regression guards
+
+`tests_internal/test_run_artifacts.py`, `tests_internal/test_import_graph.py`,
+plus additions to `test_proxy_leg.py` (RunRequest has no role/proxy_leg
+field), `test_reporting_pdf.py` (serialized form covers every field),
+`test_cli.py` (`--report` choices are the declared formats),
+`test_catalog.py` (node-id tail is unique), `test_payload_handling.py`
+(every mode is dispatchable), `test_interface_mock.py` (multiple sinks),
+`test_packet_builders.py` (`Proto`, host backends) and
+`test_proxy_relay.py` (a handshake exists for every mode).
+
+---
+
 ## Executive summary
 
 **This codebase is under-patterned rather than over-patterned, and that is mostly the right call.** There is no Singleton anywhere (no `__new__` override, no `_instance` global, no `get_logger()` accessor), no abstract-base-class hierarchy, no visitor, no dependency-injection container. Almost every "pattern" present is the *lightweight Python form* of it: a frozen dataclass instead of a Value Object class, a module-level dict instead of a Registry singleton, a `typing.Protocol` instead of an abstract Adapter base, a plain function instead of a Strategy object. For a 12.5k-line desktop tool with two front ends, that is proportionate.

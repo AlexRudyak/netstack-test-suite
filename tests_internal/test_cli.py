@@ -3,7 +3,6 @@ correct RunRequest, without invoking pytest or a DUT (run_tests is
 monkeypatched)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 import pytest
 from click.testing import CliRunner
@@ -11,20 +10,14 @@ from click.testing import CliRunner
 import src.cli.main as cli_main
 from src.reporting.models import TestRunResult
 
+from .conftest import make_run_result
+
 pytestmark = [pytest.mark.internal]
 
 
 @pytest.fixture
 def stub_result() -> TestRunResult:
-    now = datetime.now(timezone.utc)
-    return TestRunResult(
-        run_id="stub-run",
-        started_at=now,
-        finished_at=now,
-        target_ip="10.0.0.5",
-        target_stack="linux",
-        host_platform="TestOS",
-    )
+    return make_run_result(run_id="stub-run")
 
 
 def test_run_command_builds_expected_request(monkeypatch, stub_result) -> None:

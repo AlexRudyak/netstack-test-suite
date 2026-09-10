@@ -9,7 +9,6 @@ from scapy.layers.l2 import Ether
 from scapy.packet import Raw
 
 from src.packet_engine.interface import NetworkInterface
-from src.reporting.models import PacketDirection
 from src.utils.debug_log import DebugLogger, format_packet_summary
 
 pytestmark = [pytest.mark.internal]

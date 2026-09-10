@@ -28,6 +28,7 @@ from scapy.packet import Packet
 from scapy.sendrecv import AsyncSniffer
 from scapy.utils import PcapWriter
 
+from src.packet_engine.pcap import open_pcap
 from src.packet_engine.platform_backend import SocketBackend, get_backend
 
 RecorderCallback = Callable[[Packet], None]
@@ -90,10 +91,7 @@ class PacketRecorder:
         """Begin recording. Non-blocking — returns immediately while the
         sniffer runs in its own thread. `count`/`timeout` (0/None =
         unbounded) let the sniffer stop itself; otherwise call stop()."""
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        # sync=True so every packet is flushed as written — a long or
-        # abruptly-terminated capture still yields a valid, complete file.
-        self._writer = PcapWriter(str(self.output_path), append=False, sync=True)
+        self._writer = open_pcap(self.output_path)
         self._sniffer = AsyncSniffer(
             iface=self.iface,
             filter=self.bpf_filter,

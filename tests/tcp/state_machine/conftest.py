@@ -13,12 +13,11 @@ from __future__ import annotations
 from scapy.layers.inet import IP, TCP
 from scapy.packet import Packet, Raw
 
-from src.packet_engine.builders import wrap_ethernet
+from src.packet_engine.builders import DEFAULT_WINDOW, wrap_ethernet
 
-RST = 0x04
-ACK = 0x10
-SYN = 0x02
-FIN = 0x01
+# is_rst/seq32 are re-exported for the sibling test modules, which import
+# them from here rather than reaching past this package into src.utils.
+from src.utils.tcp_flags import is_rst, seq32  # noqa: F401
 
 
 def segment(
@@ -27,7 +26,7 @@ def segment(
     flags: str,
     seq: int | None = None,
     ack: int | None = None,
-    window: int = 8192,
+    window: int = DEFAULT_WINDOW,
     payload: bytes = b"",
 ) -> Packet:
     """A hand-addressed TCP segment on `conn` that does NOT touch the
@@ -36,8 +35,8 @@ def segment(
         sport=conn.local_port,
         dport=conn.dut_port,
         flags=flags,
-        seq=conn.tracker.seq if seq is None else (seq & 0xFFFFFFFF),
-        ack=conn.tracker.ack if ack is None else (ack & 0xFFFFFFFF),
+        seq=conn.tracker.seq if seq is None else seq32(seq),
+        ack=conn.tracker.ack if ack is None else seq32(ack),
         window=window,
     )
     if payload:
@@ -53,6 +52,4 @@ def connection_still_alive(conn, network_interface, *, timeout: float = 1.5, nod
     reply = network_interface.send_receive(
         segment(conn, flags="A"), timeout=timeout, test_nodeid=nodeid or "connection_still_alive"
     )
-    if reply is None or not reply.haslayer(TCP):
-        return True
-    return not (reply[TCP].flags & RST)
+    return not is_rst(reply)

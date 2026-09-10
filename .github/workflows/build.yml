@@ -1,0 +1,74 @@
+name: Build
+
+# The single-file app build, for Windows and Linux. Called by build-check.yml
+# (smoke build on every push to main) and release.yml (tag-driven, with
+# upload). Both used to carry their own near-identical copy of these steps.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build. Empty means the calling workflow's ref."
+        type: string
+        required: false
+        default: ""
+      upload:
+        description: "Stage the binary and upload it as an artifact (release only)."
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows .exe
+            name: windows
+            artifact: NetstackTestSuite.exe
+            asset: NetstackTestSuite-windows-x64.exe
+          - os: ubuntu-latest
+            label: Linux binary
+            name: linux
+            artifact: NetstackTestSuite
+            asset: NetstackTestSuite-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Qt (PySide6) shared libs — PyInstaller needs them present at build
+      # time to bundle them, and the target machine needs them at runtime.
+      - name: Install Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      - name: Install the project (GUI + dev extras, incl. PyInstaller)
+        run: pip install -e ".[gui,dev]"
+
+      - name: Build
+        run: python -m PyInstaller NetstackTestSuite.spec --noconfirm
+
+      - name: Stage artifact
+        if: inputs.upload
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "dist/${{ matrix.artifact }}" "out/${{ matrix.asset }}"
+          chmod +x "out/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.upload
+        with:
+          name: ${{ matrix.name }}
+          path: out/*

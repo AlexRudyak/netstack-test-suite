@@ -89,7 +89,7 @@ def test_capture_streams_to_pcap_writer(monkeypatch, tmp_path, stub_packet) -> N
         def close(self):
             state["closed"] = True
 
-    monkeypatch.setattr("src.packet_engine.interface.PcapWriter", _FakeWriter)
+    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", _FakeWriter)
 
     capture_path = tmp_path / "run" / "capture.pcap"
     iface = NetworkInterface("dummy0", capture_path=capture_path, backend=_StubBackend())
@@ -119,7 +119,7 @@ def test_no_pcap_writer_when_no_packets(monkeypatch, tmp_path) -> None:
         def close(self):
             pass
 
-    monkeypatch.setattr("src.packet_engine.interface.PcapWriter", _FakeWriter)
+    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", _FakeWriter)
 
     iface = NetworkInterface("dummy0", capture_path=tmp_path / "capture.pcap", backend=_StubBackend())
     iface.close()

@@ -583,23 +583,32 @@ CATALOG: list[TestSpec] = [
 ]
 
 
+# Indices built once at import. `find_by_nodeid` is called per test event
+# during a run and the details panel looks a spec up per tree selection, so
+# these lookups are on the interactive path; the catalog also only ever
+# grows (it is the file every new test must edit).
+_BY_NODEID: dict[str, TestSpec] = {spec.nodeid: spec for spec in CATALOG}
+_BY_PATH: dict[str, list[TestSpec]] = {}
+_BY_PATH_AND_TEST: dict[tuple[str, str], TestSpec] = {}
+for _spec in CATALOG:
+    _BY_PATH.setdefault(_spec.rel_path, []).append(_spec)
+    _BY_PATH_AND_TEST[(_spec.rel_path, _spec.test)] = _spec
+del _spec
+
+
 def specs_for_rel_path(rel_path: str) -> list[TestSpec]:
     """All test specs defined in the given test file (posix rel path)."""
-    normalized = rel_path.replace("\\", "/")
-    return [s for s in CATALOG if s.rel_path == normalized]
+    return list(_BY_PATH.get(rel_path.replace("\\", "/"), ()))
 
 
 def find_by_nodeid(nodeid: str) -> TestSpec | None:
     normalized = nodeid.replace("\\", "/")
-    for spec in CATALOG:
-        if spec.nodeid == normalized or normalized.endswith(spec.nodeid):
-            return spec
-    return None
+    exact = _BY_NODEID.get(normalized)
+    if exact is not None:
+        return exact
+    # Absolute or otherwise prefixed node ids still need the suffix match.
+    return next((spec for spec in CATALOG if normalized.endswith(spec.nodeid)), None)
 
 
 def find_by_test(rel_path: str, test: str) -> TestSpec | None:
-    normalized = rel_path.replace("\\", "/")
-    for spec in CATALOG:
-        if spec.rel_path == normalized and spec.test == test:
-            return spec
-    return None
+    return _BY_PATH_AND_TEST.get((rel_path.replace("\\", "/"), test))

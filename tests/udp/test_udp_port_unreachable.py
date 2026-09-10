@@ -5,25 +5,23 @@ from __future__ import annotations
 import pytest
 from scapy.layers.inet import ICMP
 
-from src.packet_engine.builders import build_udp, wrap_ethernet
-
 pytestmark = [pytest.mark.udp]
+
+CLOSED_PORT = 1  # not expected to have a listener on the DUT
+ICMP_DEST_UNREACHABLE = 3
+ICMP_CODE_PORT_UNREACHABLE = 3
 
 
 def test_closed_port_elicits_icmp_port_unreachable(
-    network_interface, dut_config, local_mac, dut_mac, local_ip
+    network_interface, dut_config, craft, source_port, nodeid
 ) -> None:
     """RFC 792: a UDP datagram to a port with no listener SHOULD elicit
     an ICMP Destination Unreachable, code 3 (Port Unreachable)."""
-    closed_port = 1  # not expected to have a listener on the DUT
-    l3 = build_udp(local_ip, dut_config.target_ip, 40000, closed_port)
-    packet = wrap_ethernet(l3, local_mac, dut_mac)
+    packet = craft.udp(source_port, dport=CLOSED_PORT)
 
-    reply = network_interface.send_receive(
-        packet, timeout=dut_config.timeout, test_nodeid="test_closed_port_elicits_icmp_port_unreachable"
-    )
+    reply = network_interface.send_receive(packet, timeout=dut_config.timeout, test_nodeid=nodeid)
 
     assert reply is not None, "Expected ICMP Port Unreachable, got no response"
     assert reply.haslayer(ICMP)
-    assert reply[ICMP].type == 3
-    assert reply[ICMP].code == 3
+    assert reply[ICMP].type == ICMP_DEST_UNREACHABLE
+    assert reply[ICMP].code == ICMP_CODE_PORT_UNREACHABLE

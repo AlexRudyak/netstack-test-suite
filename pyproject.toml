@@ -23,6 +23,7 @@ dev = [
     "pytest-qt>=4.4.0",
     "pytest-cov>=5.0.0",
     "pyinstaller>=6.0.0",
+    "ruff>=0.6.0",
 ]
 
 [project.scripts]
@@ -49,3 +50,25 @@ testpaths = ["tests", "tests_internal"]
 
 [tool.setuptools.packages.find]
 include = ["src*"]
+
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+# F: pyflakes (unused imports/names). C90: mccabe cyclomatic complexity.
+select = ["F", "C90"]
+
+[tool.ruff.lint.mccabe]
+# Enforced after the complexity audit (audits/code-complexity-audit.md) took
+# build_pytest_args (21), cli.main.run (17) and MainWindow._on_run_clicked
+# (16) under the limit. The two report-log parsers sit exactly on 10 — if one
+# of them needs an extra branch, split it rather than raising this number.
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+# Assertion-dense test bodies inflate McCabe without adding cognitive load:
+# a flat list of 10 asserts scores the same as 10 nested branches.
+"tests/**" = ["C901"]
+"tests_internal/**" = ["C901"]
+"tools/**" = ["C901"]

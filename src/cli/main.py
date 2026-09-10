@@ -16,17 +16,28 @@ from pathlib import Path
 import click
 
 from src.catalog import CATALOG
-from src.config import DUTConfig, ProxyLeg, Role, random_ephemeral_port
+from src.cli.options import click_options as shared_click_options
+from src.cli.options import shared_options
+from src.config import (
+    DUTConfig,
+    ProxyLeg,
+    Role,
+    back_leg_requirement_error,
+    random_ephemeral_port,
+    resolve_leg_target,
+    resolve_role,
+)
 from src.custom_packet.builder import CustomPacketSpec
 from src.custom_packet.sender import send_custom_packet
-from src.packet_engine.payloads import PayloadMode, from_file, from_hex, from_text
+from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 from src.packet_engine.preflight import run_preflight
 from src.packet_engine.recorder import PacketRecorder, build_host_filter
 from src.proxy.backend import EchoBackend
-from src.proxy.config import ProxyMode
+from src.proxy.config import DEFAULT_BACKEND_PORT, ProxyMode
 from src.reporting.html_report import generate_html_report
 from src.reporting.pdf_report import generate_pdf_report
 from src.runner import RunRequest, run_tests
+from src.target_profiles import list_profiles
 from src.utils.logging_config import configure_logging
 
 
@@ -35,11 +46,92 @@ from src.utils.logging_config import configure_logging
 TEST_MODULES = sorted({spec.module for spec in CATALOG})
 TEST_SUBMODULES = sorted({spec.submodule for spec in CATALOG if spec.submodule})
 
+# The options this command shares with the pytest surface in conftest.py —
+# declared once in src/cli/options.py.
+SHARED_OPTIONS = shared_options(
+    role_choices=tuple(r.value for r in Role),
+    payload_modes=tuple(m.value for m in PayloadMode),
+    proxy_modes=tuple(m.value for m in ProxyMode),
+    proxy_legs=tuple(leg.value for leg in ProxyLeg),
+    backend_port=DEFAULT_BACKEND_PORT,
+)
+
 
 @click.group()
 def cli() -> None:
     """Network Stack Test Suite — RFC conformance & vulnerability testing over Ethernet."""
     configure_logging()
+
+
+def _resolve_topology(
+    proxy_leg: str | None,
+    configured_role: str,
+    *,
+    dut_ip: str,
+    dut_port: int | None,
+    proxy_mode: str | None,
+    proxy_host: str | None,
+    proxy_port: int | None,
+    backend_host: str | None,
+) -> tuple[ProxyLeg | None, Role, str, int]:
+    """Leg → role → retarget → validate, echoing what it decided.
+
+    Returns the resolved (leg, role, target ip, target port). Raises
+    click.UsageError when the selected leg's requirements aren't met. The
+    GUI's counterpart is MainWindow._current_dut_config, which applies the
+    same rules from src.config against widget state.
+    """
+    leg = ProxyLeg(proxy_leg) if proxy_leg else None
+    role = resolve_role(leg, Role(configured_role))
+    if leg is not None:
+        click.echo(f"Proxy leg '{leg.value}' selected — running as {role.value}.")
+
+    dut_ip, dut_port = resolve_leg_target(
+        leg,
+        target_ip=dut_ip,
+        target_port=dut_port,
+        proxy_host=proxy_host,
+        proxy_port=proxy_port,
+    )
+    blocked = back_leg_requirement_error(leg, proxy_mode=proxy_mode, backend_host=backend_host)
+    if blocked:
+        raise click.UsageError(blocked)
+
+    # No --dut-port ⇒ pick one random ephemeral port and use it for the run.
+    if dut_port is None:
+        dut_port = random_ephemeral_port()
+        click.echo(f"No --dut-port given — using random destination port {dut_port} for this run.")
+    return leg, role, dut_ip, dut_port
+
+
+def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
+    """Print the run's outcome, write the report, and return the exit code."""
+    if result.errored:
+        # pytest itself failed to run the tests (collection/usage error,
+        # no tests). Don't masquerade as a clean pass — point at the log.
+        click.echo(
+            f"\npytest exited with code {result.pytest_returncode} "
+            f"(collection/usage error or no tests). See {run_dir / 'pytest_output.log'}",
+            err=True,
+        )
+        return result.pytest_returncode or 2
+
+    click.echo(f"\n{result.counts_summary}")
+    if result.total == 0:
+        click.echo(
+            "No tests ran. Check your --module/--submodule/--test selection and "
+            f"the target configuration. Raw output: {run_dir / 'pytest_output.log'}",
+            err=True,
+        )
+
+    if debug:
+        click.echo(f"Debug log: {run_dir / 'debug.log'}")
+    if report == "pdf":
+        click.echo(f"PDF report: {generate_pdf_report(result, run_dir / 'report.pdf')}")
+    elif report == "html":
+        click.echo(f"HTML report: {generate_html_report(result, run_dir / 'report.html')}")
+
+    return 1 if (result.failed or result.errors) else 0
 
 
 @cli.command()
@@ -49,29 +141,8 @@ def cli() -> None:
 @click.option("--marker", "markers", multiple=True, help="Extra pytest marker expression term(s).")
 @click.option("--iface", required=True, help="Local Ethernet interface facing the DUT.")
 @click.option("--dut-ip", required=True)
-@click.option("--dut-mac", default=None)
-@click.option(
-    "--dut-port",
-    type=int,
-    default=None,
-    help="DUT port that port-specific tests target. Omit it and a random ephemeral "
-    "port is chosen once for the whole run.",
-)
-@click.option(
-    "--dut-source-port",
-    type=int,
-    default=None,
-    help="Optional fixed local source port for tests that honor it (default: per-test).",
-)
-@click.option("--target-stack", type=click.Choice(["linux", "windows"]), required=True)
-@click.option(
-    "--role",
-    type=click.Choice([r.value for r in Role]),
-    default="client",
-    help="client = suite initiates (validates DUT responder); server = suite responds (validates DUT client).",
-)
-@click.option("--payload-mode", type=click.Choice([m.value for m in PayloadMode]), default="random")
-@click.option("--payload-size", type=int, default=64)
+@click.option("--target-stack", type=click.Choice(list_profiles()), required=True)
+@shared_click_options(SHARED_OPTIONS)
 @click.option("--allowed-target", "allowed_targets", multiple=True, help="CIDR authorized for vuln-marked tests.")
 @click.option("--confirm-vuln-tests", is_flag=True, default=False)
 @click.option(
@@ -80,25 +151,6 @@ def cli() -> None:
     default=False,
     help="Write a tshark-style per-packet debug log to reports/<run_id>/debug.log.",
 )
-@click.option(
-    "--proxy-mode",
-    type=click.Choice([m.value for m in ProxyMode]),
-    default=None,
-    help="Enable the proxy-DUT tests. Needs a backend instance (`netstack-cli proxy-serve`).",
-)
-@click.option(
-    "--proxy-leg",
-    type=click.Choice([leg.value for leg in ProxyLeg]),
-    default=None,
-    help="Aim the ORDINARY suites (ip/udp/icmp/tcp) at one leg of a proxy DUT: "
-    "'front' probes its client-facing stack (implies --role client, retargets to "
-    "--proxy-host/--proxy-port); 'back' observes the stack it dials origins with "
-    "(implies --role server, needs --proxy-mode + --backend-host so traffic can be induced).",
-)
-@click.option("--proxy-host", default=None, help="Proxy DUT front address (explicit modes).")
-@click.option("--proxy-port", type=int, default=None, help="Proxy DUT front port (explicit modes).")
-@click.option("--backend-host", default=None, help="Origin address the DUT must reach (backend instance).")
-@click.option("--backend-port", type=int, default=9099, help="Backend instance listen port.")
 @click.option("--report", type=click.Choice(["pdf", "html", "none"]), default="pdf")
 @click.option(
     "--skip-preflight",
@@ -139,29 +191,16 @@ def run(
       netstack-cli run --module tcp --submodule syn --iface eth0 --dut-ip 10.0.0.5 --target-stack windows
       netstack-cli run --test test_three_way_handshake --iface eth0 --dut-ip 10.0.0.5 --target-stack linux
     """
-    leg = ProxyLeg(proxy_leg) if proxy_leg else None
-    if leg is not None:
-        # The leg says which side of the proxy we're on, and therefore which
-        # side the suite plays; keeping a separate --role in sync would only
-        # be a way to get it wrong.
-        role = leg.implied_role.value
-        click.echo(f"Proxy leg '{leg.value}' selected — running as {role}.")
-    if leg is ProxyLeg.FRONT:
-        # Probe the proxy's client-facing stack: that's a different address
-        # and a port we know is open.
-        dut_ip = proxy_host or dut_ip
-        if dut_port is None:
-            dut_port = proxy_port
-    if leg is ProxyLeg.BACK and not (proxy_mode and backend_host):
-        raise click.UsageError(
-            "--proxy-leg back needs --proxy-mode and --backend-host: a proxy's back leg is "
-            "idle unless traffic is driven through its front, so the run has to induce it."
-        )
-
-    # No --dut-port ⇒ pick one random ephemeral port and use it for the run.
-    if dut_port is None:
-        dut_port = random_ephemeral_port()
-        click.echo(f"No --dut-port given — using random destination port {dut_port} for this run.")
+    leg, resolved_role, dut_ip, dut_port = _resolve_topology(
+        proxy_leg,
+        role,
+        dut_ip=dut_ip,
+        dut_port=dut_port,
+        proxy_mode=proxy_mode,
+        proxy_host=proxy_host,
+        proxy_port=proxy_port,
+        backend_host=backend_host,
+    )
 
     config = DUTConfig(
         interface=iface,
@@ -171,7 +210,7 @@ def run(
         target_port=dut_port,
         source_port=dut_source_port,
         allowed_targets=tuple(allowed_targets),
-        role=Role(role),
+        role=resolved_role,
         proxy_leg=leg,
     )
 
@@ -194,7 +233,7 @@ def run(
         payload_size=payload_size,
         confirm_vuln_tests=confirm_vuln_tests,
         debug=debug,
-        role=Role(role),
+        role=resolved_role,
         proxy_mode=proxy_mode,
         proxy_leg=proxy_leg,
         proxy_host=proxy_host,
@@ -204,46 +243,12 @@ def run(
     )
 
     def on_test_event(event) -> None:
-        line = f"[{event.outcome.value.upper():7}] {event.nodeid} ({event.duration_s:.3f}s)"
-        if event.message:
-            line += f" — {event.message}"
-        click.echo(line)
+        click.echo(event.summary_line())
 
     result = run_tests(request, on_test_event=on_test_event)
 
     run_dir = Path("reports") / result.run_id
-
-    if result.errored:
-        # pytest itself failed to run the tests (collection/usage error,
-        # no tests). Don't masquerade as a clean pass — point at the log.
-        click.echo(
-            f"\npytest exited with code {result.pytest_returncode} "
-            f"(collection/usage error or no tests). See {run_dir / 'pytest_output.log'}",
-            err=True,
-        )
-        sys.exit(result.pytest_returncode or 2)
-
-    click.echo(
-        f"\n{result.passed} passed, {result.failed} failed, "
-        f"{result.errors} errored, {result.skipped} skipped, {result.total} total"
-    )
-    if result.total == 0:
-        click.echo(
-            "No tests ran. Check your --module/--submodule/--test selection and "
-            f"the target configuration. Raw output: {run_dir / 'pytest_output.log'}",
-            err=True,
-        )
-
-    if debug:
-        click.echo(f"Debug log: {run_dir / 'debug.log'}")
-    if report == "pdf":
-        path = generate_pdf_report(result, run_dir / "report.pdf")
-        click.echo(f"PDF report: {path}")
-    elif report == "html":
-        path = generate_html_report(result, run_dir / "report.html")
-        click.echo(f"HTML report: {path}")
-
-    sys.exit(1 if (result.failed or result.errors) else 0)
+    sys.exit(_emit_results(result, run_dir, report=report, debug=debug))
 
 
 @cli.command()
@@ -287,13 +292,8 @@ def send(
     mode = PayloadMode(payload_mode)
     custom = None
     if mode is PayloadMode.CUSTOM:
-        if payload_text is not None:
-            custom = from_text(payload_text)
-        elif payload_hex is not None:
-            custom = from_hex(payload_hex)
-        elif payload_file is not None:
-            custom = from_file(payload_file)
-        else:
+        custom = resolve_custom_source(text=payload_text, hex_str=payload_hex, file=payload_file)
+        if custom is None:
             raise click.UsageError(
                 "--payload-mode=custom requires --payload, --payload-hex, or --payload-file"
             )
@@ -389,7 +389,9 @@ def record(
 
 @cli.command("proxy-serve")
 @click.option("--listen-host", default="0.0.0.0", help="Address to listen on (the origin the DUT dials).")
-@click.option("--listen-port", type=int, default=9099, help="Port to listen on.")
+@click.option(
+    "--listen-port", type=int, default=DEFAULT_BACKEND_PORT, help="Port to listen on."
+)
 @click.option("--udp/--no-udp", default=False, help="Also run a UDP echo responder on the same port.")
 def proxy_serve(listen_host: str, listen_port: int, udp: bool) -> None:
     """Run the backend (origin) instance for proxy-DUT testing.

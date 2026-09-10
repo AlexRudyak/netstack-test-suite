@@ -14,7 +14,7 @@ pytestmark = [pytest.mark.udp, pytest.mark.server]
 
 
 def test_dut_sends_udp_and_receives_echo(
-    network_interface, dut_config, local_mac, local_ip
+    network_interface, dut_config, local_mac, local_ip, nodeid
 ) -> None:
     """RFC 768: wait for the DUT to send a UDP datagram to us, echo the
     payload back, and confirm the DUT initiated the exchange."""
@@ -24,7 +24,7 @@ def test_dut_sends_udp_and_receives_echo(
         local_mac,
         dut_config.target_port,
         timeout=dut_config.timeout * 3,
-        test_nodeid="test_dut_sends_udp_and_receives_echo",
+        test_nodeid=nodeid,
     )
     assert received is not None, (
         f"No UDP datagram received on {local_ip}:{dut_config.target_port} from the DUT — "

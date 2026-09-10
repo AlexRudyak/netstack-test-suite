@@ -78,7 +78,7 @@ def patched(monkeypatch):
         created["sniffer"] = sniffer
         return sniffer
 
-    monkeypatch.setattr("src.packet_engine.recorder.PcapWriter", make_writer)
+    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", make_writer)
     monkeypatch.setattr("src.packet_engine.recorder.AsyncSniffer", make_sniffer)
     return created
 

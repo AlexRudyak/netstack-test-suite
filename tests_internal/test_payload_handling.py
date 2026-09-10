@@ -12,6 +12,7 @@ from src.packet_engine.payloads import (
     from_text,
     ones,
     random_bytes,
+    resolve_custom_source,
     resolve_payload,
     zeros,
 )
@@ -76,3 +77,23 @@ def test_payload_attaches_at_correct_offset_across_builders() -> None:
     payload = b"PAYLOAD"
     pkt = build_ip("10.0.0.1", "10.0.0.2", payload=payload)
     assert bytes(pkt).endswith(payload)
+
+
+# --- resolve_custom_source: the text > hex > file precedence rule ----------
+# Shared by CLI `send`, the payload_settings fixture and the GUI panel, all
+# three of which previously implemented it separately.
+
+
+def test_custom_source_precedence_is_text_then_hex_then_file(tmp_path) -> None:
+    path = tmp_path / "payload.bin"
+    path.write_bytes(b"FROMFILE")
+
+    assert resolve_custom_source(text="hi", hex_str="4142", file=path) == b"hi"
+    assert resolve_custom_source(hex_str="4142", file=path) == b"AB"
+    assert resolve_custom_source(file=path) == b"FROMFILE"
+
+
+def test_custom_source_returns_none_when_no_source_given() -> None:
+    """None, not an exception — each front end raises its own error type."""
+    assert resolve_custom_source() is None
+    assert resolve_custom_source(text="", hex_str="", file="") is None

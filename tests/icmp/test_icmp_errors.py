@@ -6,15 +6,13 @@ import pytest
 from scapy.layers.inet import ICMP, IP
 from scapy.packet import Raw
 
-from src.packet_engine.builders import wrap_ethernet
-
 pytestmark = [pytest.mark.icmp]
 
 
 @pytest.mark.client
 @pytest.mark.vuln
 def test_truncated_icmp_does_not_crash_dut(
-    network_interface, dut_config, local_mac, dut_mac, local_ip
+    network_interface, craft, assert_dut_alive, nodeid
 ) -> None:
     """Sends an ICMP message with a truncated body (a header claiming a
     type/code but no valid trailing structure) and verifies the DUT
@@ -22,20 +20,7 @@ def test_truncated_icmp_does_not_crash_dut(
     immediately afterward."""
     # An ICMP Timestamp (type 13) header with the body chopped to a single
     # byte — structurally invalid.
-    malformed = wrap_ethernet(
-        IP(src=local_ip, dst=dut_config.target_ip) / ICMP(type=13) / Raw(b"\x00"),
-        local_mac,
-        dut_mac,
-    )
-    network_interface.send(malformed, test_nodeid="test_truncated_icmp_does_not_crash_dut")
+    malformed = craft.l3(IP(src=craft.local_ip, dst=craft.dut_ip) / ICMP(type=13) / Raw(b"\x00"))
+    network_interface.send(malformed, test_nodeid=nodeid)
 
-    ping = wrap_ethernet(
-        IP(src=local_ip, dst=dut_config.target_ip) / ICMP(type=8, id=0x2222, seq=1),
-        local_mac,
-        dut_mac,
-    )
-    reply = network_interface.send_receive(
-        ping, timeout=dut_config.timeout, test_nodeid="test_truncated_icmp_does_not_crash_dut"
-    )
-    assert reply is not None, "DUT did not respond after a truncated ICMP message — possible crash/hang"
-    assert reply.haslayer(ICMP) and reply[ICMP].type == 0
+    assert_dut_alive("a truncated ICMP message")

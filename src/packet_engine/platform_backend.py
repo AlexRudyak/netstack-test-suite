@@ -20,6 +20,16 @@ import platform
 from dataclasses import dataclass
 from typing import Protocol
 
+SUPPORTED_HOSTS = ("Windows", "Linux")
+
+
+def unsupported_host_message(system: str) -> str:
+    """One wording for the host-OS check, shared with src/utils/permissions.py."""
+    return (
+        f"Unsupported host platform: {system!r}. This suite supports running on "
+        f"{' and '.join(SUPPORTED_HOSTS)} hosts."
+    )
+
 
 class SocketBackend(Protocol):
     host_name: str
@@ -61,7 +71,4 @@ def get_backend() -> SocketBackend:
         return WindowsBackend()
     if system == "Linux":
         return LinuxBackend()
-    raise RuntimeError(
-        f"Unsupported host platform: {system!r}. "
-        "This suite supports running on Windows and Linux hosts."
-    )
+    raise RuntimeError(unsupported_host_message(system))

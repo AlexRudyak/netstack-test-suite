@@ -2,6 +2,7 @@
 run and shows the resulting output path."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
@@ -41,30 +42,27 @@ class ReportPanel(QWidget):
         elif result.total == 0:
             summary = "no tests ran — check the test selection and configuration."
         else:
-            summary = (
-                f"{result.passed} passed, {result.failed} failed, "
-                f"{result.errors} errored, {result.skipped} skipped, {result.total} total."
-            )
+            summary = f"{result.counts_summary}."
         self._status_label.setText(f"Run {result.run_id}: {summary}")
 
-    def _export_pdf(self) -> None:
+    def _export(self, *, suffix: str, label: str, generate: Callable[..., Path]) -> None:
+        """Ask for a destination, generate, and report where it landed.
+
+        The PDF and HTML exports differ only in extension, dialog wording,
+        and which generator runs, so they share one flow.
+        """
         if self._result is None:
             return
-        default_path = reports_dir() / self._result.run_id / "report.pdf"
+        default_path = reports_dir() / self._result.run_id / f"report.{suffix}"
         path_str, _ = QFileDialog.getSaveFileName(
-            self, "Export PDF report", str(default_path), "PDF files (*.pdf)"
+            self, f"Export {label} report", str(default_path), f"{label} files (*.{suffix})"
         )
         if path_str:
-            output = generate_pdf_report(self._result, Path(path_str))
-            self._status_label.setText(f"PDF written to {output}")
+            output = generate(self._result, Path(path_str))
+            self._status_label.setText(f"{label} written to {output}")
+
+    def _export_pdf(self) -> None:
+        self._export(suffix="pdf", label="PDF", generate=generate_pdf_report)
 
     def _export_html(self) -> None:
-        if self._result is None:
-            return
-        default_path = reports_dir() / self._result.run_id / "report.html"
-        path_str, _ = QFileDialog.getSaveFileName(
-            self, "Export HTML report", str(default_path), "HTML files (*.html)"
-        )
-        if path_str:
-            output = generate_html_report(self._result, Path(path_str))
-            self._status_label.setText(f"HTML written to {output}")
+        self._export(suffix="html", label="HTML", generate=generate_html_report)

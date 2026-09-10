@@ -10,16 +10,10 @@ as a valid connection request.
 from __future__ import annotations
 
 import pytest
-from scapy.layers.inet import TCP
 
-from src.packet_engine.builders import build_tcp, wrap_ethernet
+from src.utils.tcp_flags import is_bare_syn_ack
 
 pytestmark = [pytest.mark.tcp, pytest.mark.syn]
-
-SYN = 0x02
-FIN = 0x01
-RST = 0x04
-ACK = 0x10
 
 
 @pytest.mark.parametrize(
@@ -32,28 +26,16 @@ ACK = 0x10
     ],
 )
 def test_contradictory_flag_combination_does_not_establish_connection(
-    network_interface, dut_config, local_mac, dut_mac, local_ip, flags, label
+    network_interface, craft, source_port, nodeid, flags, label
 ) -> None:
     """None of these patterns should transition the DUT to ESTABLISHED —
     proven by never observing a bare SYN-ACK (SYN|ACK with no FIN/RST
     also set) in response."""
-    node_id = f"test_contradictory_flag_combination_does_not_establish_connection[{label}]"
-    packet = wrap_ethernet(
-        build_tcp(local_ip, dut_config.target_ip, 44000, dut_config.target_port, flags=flags, seq=1000),
-        local_mac,
-        dut_mac,
-    )
-    network_interface.send(packet, test_nodeid=node_id)
+    packet = craft.tcp(source_port, flags=flags, seq=1000)
+    network_interface.send(packet, test_nodeid=nodeid)
 
     replies = network_interface.sniff(
-        count=1,
-        timeout=1.5,
-        lfilter=lambda p: (
-            p.haslayer(TCP)
-            and p[TCP].flags & (SYN | ACK) == (SYN | ACK)
-            and not (p[TCP].flags & (FIN | RST))
-        ),
-        test_nodeid=node_id,
+        count=1, timeout=1.5, lfilter=is_bare_syn_ack, test_nodeid=nodeid
     )
     assert not replies, (
         f"DUT answered a {label} probe with a bare SYN-ACK, treating a contradictory "

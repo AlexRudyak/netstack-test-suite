@@ -12,23 +12,22 @@ rather than folding into this scaffold's single representative case.
 from __future__ import annotations
 
 import pytest
-from scapy.layers.inet import TCP
+
+from src.utils.tcp_flags import is_ack
 
 pytestmark = [pytest.mark.tcp, pytest.mark.state_machine]
 
-ACK = 0x10
 
-
-def test_fin_before_peer_fin_is_still_acknowledged(established_tcp_connection, network_interface, dut_config) -> None:
+def test_fin_before_peer_fin_is_still_acknowledged(
+    established_tcp_connection, network_interface, dut_config, nodeid
+) -> None:
     """Confirms the DUT ACKs our FIN even though we haven't seen the
     DUT's own FIN first — i.e. it doesn't require a specific close
     ordering to accept a valid FIN on an ESTABLISHED connection."""
     conn = established_tcp_connection
     fin = conn.build(flags="FA")
 
-    reply = network_interface.send_receive(
-        fin, timeout=dut_config.timeout, test_nodeid="test_fin_before_peer_fin_is_still_acknowledged"
-    )
+    reply = network_interface.send_receive(fin, timeout=dut_config.timeout, test_nodeid=nodeid)
 
     assert reply is not None, "Expected an ACK of our FIN even under simultaneous-close ordering"
-    assert reply.haslayer(TCP) and reply[TCP].flags & ACK
+    assert is_ack(reply)

@@ -40,15 +40,7 @@ class PreflightResult:
 
 def run_preflight(config: DUTConfig, *, timeout: float = 1.5) -> PreflightResult:
     """Validate config + privileges, then probe the DUT with an ARP request."""
-    missing = [
-        name
-        for name, value in (
-            ("Target IP", config.target_ip),
-            ("Interface", config.interface),
-            ("Target stack", config.target_stack),
-        )
-        if not value
-    ]
+    missing = config.missing_required(as_flags=False)
     if missing:
         return PreflightResult(
             ok=False,

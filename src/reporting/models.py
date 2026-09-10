@@ -44,6 +44,26 @@ class TestOutcome(Enum):
     ERROR = "error"
 
 
+# How each outcome is presented, in one table. Every renderer reads its own
+# column here rather than re-typing the palette: the HTML report's CSS class
+# and hex values, the PDF's text/background colours, the matplotlib bar
+# colour, and the GUI log panel's short label.
+OUTCOME_STYLE: dict[TestOutcome, dict[str, str]] = {
+    TestOutcome.PASSED: {
+        "css": "passed", "fg": "#1a7f37", "bg": "#e8f5e9", "mpl": "tab:green", "prefix": "PASS",
+    },
+    TestOutcome.FAILED: {
+        "css": "failed", "fg": "#b71c1c", "bg": "#ffebee", "mpl": "tab:red", "prefix": "FAIL",
+    },
+    TestOutcome.ERROR: {
+        "css": "error", "fg": "#8a1a9b", "bg": "#f3e5f5", "mpl": "tab:purple", "prefix": "ERR",
+    },
+    TestOutcome.SKIPPED: {
+        "css": "skipped", "fg": "#616161", "bg": "#f5f5f5", "mpl": "tab:gray", "prefix": "SKIP",
+    },
+}
+
+
 @dataclass
 class TestEvent:
     __test__: ClassVar[bool] = False
@@ -58,6 +78,12 @@ class TestEvent:
         d = asdict(self)
         d["outcome"] = self.outcome.value
         return d
+
+    def summary_line(self, label_width: int = 7) -> str:
+        """One console/log line for this test. Shared by the CLI's progress
+        output and the GUI log panel so a run reads the same in both."""
+        line = f"[{self.outcome.value.upper():{label_width}}] {self.nodeid} ({self.duration_s:.3f}s)"
+        return f"{line} — {self.message}" if self.message else line
 
 
 @dataclass
@@ -130,6 +156,14 @@ class TestRunResult:
     @property
     def total(self) -> int:
         return len(self.tests)
+
+    @property
+    def counts_summary(self) -> str:
+        """The one-line tally every front end prints at the end of a run."""
+        return (
+            f"{self.passed} passed, {self.failed} failed, {self.errors} errored, "
+            f"{self.skipped} skipped, {self.total} total"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {

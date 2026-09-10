@@ -12,24 +12,17 @@ from __future__ import annotations
 import pytest
 from scapy.layers.inet import TCP
 
-from src.packet_engine.builders import build_tcp, wrap_ethernet
 from src.packet_engine.sequence import TCPSequenceTracker
 
 pytestmark = [pytest.mark.tcp, pytest.mark.congestion]
 
 
 def test_syn_ack_window_matches_target_stack_profile(
-    network_interface, dut_config, target_profile, local_mac, dut_mac, local_ip
+    network_interface, dut_config, target_profile, craft, source_port, nodeid
 ) -> None:
     tracker = TCPSequenceTracker.new()
-    syn = wrap_ethernet(
-        build_tcp(local_ip, dut_config.target_ip, 46000, dut_config.target_port, flags="S", seq=tracker.seq),
-        local_mac,
-        dut_mac,
-    )
-    reply = network_interface.send_receive(
-        syn, timeout=dut_config.timeout, test_nodeid="test_syn_ack_window_matches_target_stack_profile"
-    )
+    syn = craft.tcp(source_port, flags="S", seq=tracker.seq)
+    reply = network_interface.send_receive(syn, timeout=dut_config.timeout, test_nodeid=nodeid)
 
     assert reply is not None and reply.haslayer(TCP)
     window = reply[TCP].window

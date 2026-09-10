@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.proxy.backend import EchoBackend
+from src.proxy.config import DEFAULT_BACKEND_PORT
 
 _REFRESH_MS = 500
 
@@ -41,7 +42,7 @@ class ProxyBackendPanel(QWidget):
         # privileged (<1024) port. The bound port is shown once started.
         self._listen_port.setRange(0, 65535)
         self._listen_port.setSpecialValueText("auto (ephemeral)")
-        self._listen_port.setValue(9099)
+        self._listen_port.setValue(DEFAULT_BACKEND_PORT)
         self._enable_udp = QCheckBox("Also echo UDP on the same port")
 
         form = QFormLayout()

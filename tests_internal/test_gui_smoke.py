@@ -311,3 +311,64 @@ def test_failed_preflight_blocks_run_and_reports(qtbot, monkeypatch) -> None:
     assert "Target IP" in log_text
     # And the user is shown the Log tab, not the blank Live plot.
     assert window._right_tabs.currentWidget() is window._log_panel
+
+
+# --- widget state -> RunRequest --------------------------------------------
+# Extracted from _on_run_clicked by the complexity audit (F-03) precisely so
+# it could be asserted without driving the whole click handler.
+
+
+def test_build_run_request_maps_widget_state(qtbot) -> None:
+    from src.config import Role
+    from src.gui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window._target_ip.setText("10.0.0.5")
+    window._iface_combo.addItem("eth9")
+    window._iface_combo.setCurrentText("eth9")
+    window._dst_port.setValue(8080)
+    window._confirm_vuln.setChecked(True)
+    window._debug.setChecked(True)
+    window._proxy_front.setText("10.0.0.7:1080")
+    window._proxy_backend.setText("10.0.0.9:9099")
+
+    config = window._current_dut_config()
+    request = window._build_run_request(config)
+
+    assert request.config is config
+    assert request.confirm_vuln_tests is True
+    assert request.debug is True
+    assert request.role is config.role
+    assert request.proxy_host == "10.0.0.7"
+    assert request.proxy_port == 1080
+    assert request.backend_host == "10.0.0.9"
+    assert request.backend_port == 9099
+    # No proxy leg selected ⇒ the ordinary endpoint form.
+    assert request.proxy_leg is None
+    assert config.role is Role.CLIENT
+
+
+def test_build_run_request_carries_proxy_leg_when_selected(qtbot) -> None:
+    """A front leg forces the client role and retargets to the proxy front —
+    the rule src.config owns and both front ends must apply identically."""
+    from src.config import ProxyLeg, Role
+    from src.gui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window._target_ip.setText("10.0.0.5")
+    window._proxy_front.setText("10.0.0.7:1080")
+    window._role.setCurrentText("server")  # overridden by the front leg
+    index = window._proxy_leg.findData(ProxyLeg.FRONT.value)
+    window._proxy_leg.setCurrentIndex(index)
+
+    config = window._current_dut_config()
+    request = window._build_run_request(config)
+
+    assert request.proxy_leg == "front"
+    assert config.role is Role.CLIENT
+    assert config.target_ip == "10.0.0.7"
+    assert config.target_port == 1080

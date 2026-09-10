@@ -14,16 +14,18 @@ thin loops that sniff for the DUT's packet, build the reply, and send it.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.l2 import Ether
 from scapy.packet import Packet, Raw
 
 from src.packet_engine.interface import NetworkInterface
+from src.utils.tcp_flags import ACK, MAX_SEQ, SYN, seq32
 
-MAX_SEQ = 2**32 - 1
-SYN = 0x02
-ACK = 0x10
+# ICMP message types (RFC 792).
+ICMP_ECHO_REPLY = 0
+ICMP_ECHO_REQUEST = 8
 
 
 # --- Pure reply builders (unit-testable) -----------------------------------
@@ -50,40 +52,77 @@ def build_syn_ack_reply(
             dport=tcp.sport,
             flags="SA",
             seq=isn,
-            ack=(tcp.seq + 1) & MAX_SEQ,
+            ack=seq32(tcp.seq + 1),
             window=window if window is not None else tcp.window,
         )
     )
     return reply
 
 
+def _echo_payload(packet: Packet) -> bytes:
+    """The L7 bytes to mirror back, or empty when the packet carried none."""
+    return bytes(packet[Raw].load) if packet.haslayer(Raw) else b""
+
+
+def _reply_headers(received: Packet, local_mac: str):
+    """L2/L3 of a reply to `received`: source and destination swapped."""
+    ip = received[IP]
+    return Ether(src=local_mac, dst=received[Ether].src) / IP(src=ip.dst, dst=ip.src)
+
+
 def build_udp_echo_reply(datagram: Packet, local_mac: str) -> Packet:
     """Echo a UDP datagram back to its sender (payload unchanged)."""
-    ip = datagram[IP]
     udp = datagram[UDP]
-    payload = bytes(datagram[Raw].load) if datagram.haslayer(Raw) else b""
     return (
-        Ether(src=local_mac, dst=datagram[Ether].src)
-        / IP(src=ip.dst, dst=ip.src)
+        _reply_headers(datagram, local_mac)
         / UDP(sport=udp.dport, dport=udp.sport)
-        / Raw(load=payload)
+        / Raw(load=_echo_payload(datagram))
     )
 
 
 def build_icmp_echo_reply(request: Packet, local_mac: str) -> Packet:
     """Build the ICMP Echo Reply (type 0) for a received Echo Request."""
-    ip = request[IP]
     icmp = request[ICMP]
-    payload = bytes(request[Raw].load) if request.haslayer(Raw) else b""
     return (
-        Ether(src=local_mac, dst=request[Ether].src)
-        / IP(src=ip.dst, dst=ip.src)
-        / ICMP(type=0, id=icmp.id, seq=icmp.seq)
-        / Raw(load=payload)
+        _reply_headers(request, local_mac)
+        / ICMP(type=ICMP_ECHO_REPLY, id=icmp.id, seq=icmp.seq)
+        / Raw(load=_echo_payload(request))
     )
 
 
 # --- Orchestration (sniff for the DUT's packet, reply) ----------------------
+#
+# All three responders below are the same shape: wait for one packet from the
+# DUT matching a filter, build the reply, send it, return what arrived. The
+# shape is factored into `_serve_once`; each public function keeps its own
+# filter and docstring, which is where the per-protocol meaning lives.
+
+
+def _addressed_to_us(local_ip: str, layer) -> Callable[[Packet], bool]:
+    """The filter prefix every responder needs: the right L4 layer, an IP
+    header, and destined for us — not merely present on the segment."""
+
+    def match(packet: Packet) -> bool:
+        return packet.haslayer(layer) and packet.haslayer(IP) and packet[IP].dst == local_ip
+
+    return match
+
+
+def _serve_once(
+    interface: NetworkInterface,
+    lfilter: Callable[[Packet], bool],
+    build_reply: Callable[[Packet], Packet],
+    *,
+    timeout: float,
+    test_nodeid: str | None,
+) -> Packet | None:
+    """Wait for one matching packet from the DUT, answer it, and return it
+    (or None if nothing arrived within `timeout`)."""
+    received = interface.sniff(count=1, timeout=timeout, lfilter=lfilter, test_nodeid=test_nodeid)
+    if not received:
+        return None
+    interface.send(build_reply(received[0]), test_nodeid=test_nodeid)
+    return received[0]
 
 
 def serve_tcp_handshake(
@@ -101,30 +140,27 @@ def serve_tcp_handshake(
     A non-None return means the DUT completed a three-way handshake it
     initiated — i.e. its client-side connect path works.
     """
-    syns = interface.sniff(
-        count=1,
-        timeout=timeout,
-        lfilter=lambda p: (
-            p.haslayer(TCP)
-            and p.haslayer(IP)
-            and p[IP].dst == local_ip
+    to_us = _addressed_to_us(local_ip, TCP)
+    syn = _serve_once(
+        interface,
+        lambda p: (
+            to_us(p)
             and p[TCP].dport == listen_port
             and p[TCP].flags & SYN
             and not (p[TCP].flags & ACK)
         ),
+        lambda p: build_syn_ack_reply(p, local_mac),
+        timeout=timeout,
         test_nodeid=test_nodeid,
     )
-    if not syns:
+    if syn is None:
         return None
-    syn = syns[0]
-    interface.send(build_syn_ack_reply(syn, local_mac), test_nodeid=test_nodeid)
 
     acks = interface.sniff(
         count=1,
         timeout=timeout,
         lfilter=lambda p: (
-            p.haslayer(TCP)
-            and p[IP].dst == local_ip
+            to_us(p)
             and p[TCP].dport == listen_port
             and p[TCP].flags & ACK
             and not (p[TCP].flags & SYN)
@@ -145,19 +181,14 @@ def serve_udp_echo(
 ) -> Packet | None:
     """Wait for the DUT to send a UDP datagram to `listen_port`, echo it
     back, and return the datagram we received (or None on timeout)."""
-    datagrams = interface.sniff(
-        count=1,
+    to_us = _addressed_to_us(local_ip, UDP)
+    return _serve_once(
+        interface,
+        lambda p: to_us(p) and p[UDP].dport == listen_port,
+        lambda p: build_udp_echo_reply(p, local_mac),
         timeout=timeout,
-        lfilter=lambda p: (
-            p.haslayer(UDP) and p.haslayer(IP) and p[IP].dst == local_ip and p[UDP].dport == listen_port
-        ),
         test_nodeid=test_nodeid,
     )
-    if not datagrams:
-        return None
-    received = datagrams[0]
-    interface.send(build_udp_echo_reply(received, local_mac), test_nodeid=test_nodeid)
-    return received
 
 
 def serve_icmp_echo(
@@ -170,16 +201,11 @@ def serve_icmp_echo(
 ) -> Packet | None:
     """Wait for the DUT to send an ICMP Echo Request to us, reply with an
     Echo Reply, and return the request (or None on timeout)."""
-    requests = interface.sniff(
-        count=1,
+    to_us = _addressed_to_us(local_ip, ICMP)
+    return _serve_once(
+        interface,
+        lambda p: to_us(p) and p[ICMP].type == ICMP_ECHO_REQUEST,
+        lambda p: build_icmp_echo_reply(p, local_mac),
         timeout=timeout,
-        lfilter=lambda p: (
-            p.haslayer(ICMP) and p.haslayer(IP) and p[IP].dst == local_ip and p[ICMP].type == 8
-        ),
         test_nodeid=test_nodeid,
     )
-    if not requests:
-        return None
-    request = requests[0]
-    interface.send(build_icmp_echo_reply(request, local_mac), test_nodeid=test_nodeid)
-    return request

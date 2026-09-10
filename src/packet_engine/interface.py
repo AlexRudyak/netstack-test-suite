@@ -21,6 +21,7 @@ from scapy.packet import Packet
 from scapy.sendrecv import sendp, sniff as scapy_sniff, srp1
 from scapy.utils import PcapWriter
 
+from src.packet_engine.pcap import open_pcap
 from src.packet_engine.platform_backend import SocketBackend, get_backend
 from src.reporting.models import PacketDirection, PacketEvent
 
@@ -98,8 +99,7 @@ class NetworkInterface:
         if self._capture_path is not None:
             with self._lock:
                 if self._pcap_writer is None:
-                    self._capture_path.parent.mkdir(parents=True, exist_ok=True)
-                    self._pcap_writer = PcapWriter(str(self._capture_path), append=False, sync=True)
+                    self._pcap_writer = open_pcap(self._capture_path)
                 self._pcap_writer.write(packet)
                 self._packet_count += 1
         if self._debug_logger is not None:

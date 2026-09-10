@@ -30,26 +30,11 @@ from pathlib import Path
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.packet import Packet, Raw
 
-# TCP flag bit -> tshark-style name, in header bit order.
-_TCP_FLAG_NAMES = [
-    (0x01, "FIN"),
-    (0x02, "SYN"),
-    (0x04, "RST"),
-    (0x08, "PSH"),
-    (0x10, "ACK"),
-    (0x20, "URG"),
-    (0x40, "ECE"),
-    (0x80, "CWR"),
-]
+from src.utils.tcp_flags import flag_labels
 
 # Frames whose caller we skip when resolving "who initiated this packet",
 # so the recorded function is the test/helper, not our own plumbing.
 _INTERNAL_FILES = ("interface.py", "debug_log.py", "recorder.py")
-
-
-def _tcp_flag_labels(flags: int) -> str:
-    names = [name for bit, name in _TCP_FLAG_NAMES if flags & bit]
-    return "[" + ", ".join(names) + "]" if names else "[]"
 
 
 def _payload_len(packet: Packet) -> int:
@@ -66,7 +51,7 @@ def format_packet_summary(packet: Packet) -> str:
         tcp = packet[TCP]
         return (
             f"TCP {ip.src}:{tcp.sport} -> {ip.dst}:{tcp.dport} "
-            f"{_tcp_flag_labels(int(tcp.flags))} "
+            f"{flag_labels(int(tcp.flags))} "
             f"Seq={tcp.seq} Ack={tcp.ack} Win={tcp.window} Len={_payload_len(packet)}"
         )
     if packet.haslayer(UDP):

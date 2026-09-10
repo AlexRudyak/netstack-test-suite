@@ -10,18 +10,16 @@ from src.reporting.html_report import generate_html_report
 from src.reporting.models import PacketDirection, PacketEvent, TestEvent, TestOutcome, TestRunResult
 from src.reporting.pdf_report import generate_pdf_report
 
+from .conftest import make_run_result
+
 pytestmark = [pytest.mark.internal]
 
 
 def _sample_result() -> TestRunResult:
     now = datetime.now(timezone.utc)
-    return TestRunResult(
+    return make_run_result(
         run_id="unit-test-run",
-        started_at=now,
-        finished_at=now,
-        target_ip="10.0.0.5",
         target_stack="windows",
-        host_platform="TestOS",
         payload_mode="random",
         tests=[
             TestEvent(nodeid="tests/tcp/syn/test_x.py::test_a", outcome=TestOutcome.PASSED, duration_s=0.05),

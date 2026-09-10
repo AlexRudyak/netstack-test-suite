@@ -21,15 +21,32 @@ from reportlab.platypus import (
 
 from src.plotting.static_charts import render_packet_timeline, render_pass_fail_summary
 from src.reporting import report_data
-from src.reporting.models import TestOutcome, TestRunResult
+from src.reporting.models import OUTCOME_STYLE, TestRunResult
 
-# Outcome → (text colour, row background). Used to colour the detail table.
+# Outcome → (text colour, row background), from the shared presentation
+# table in reporting/models.py.
 _OUTCOME_COLORS = {
-    TestOutcome.PASSED: (colors.HexColor("#1a7f37"), colors.HexColor("#e8f5e9")),
-    TestOutcome.FAILED: (colors.HexColor("#b71c1c"), colors.HexColor("#ffebee")),
-    TestOutcome.ERROR: (colors.HexColor("#8a1a9b"), colors.HexColor("#f3e5f5")),
-    TestOutcome.SKIPPED: (colors.HexColor("#616161"), colors.HexColor("#f5f5f5")),
+    outcome: (colors.HexColor(style["fg"]), colors.HexColor(style["bg"]))
+    for outcome, style in OUTCOME_STYLE.items()
 }
+
+# Shared grid/padding directives for the report's data tables (the catalog
+# appendix and the per-test detail table). Each table adds only what is
+# genuinely its own — the detail table's per-row outcome backgrounds.
+_TABLE_BASE = [
+    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#333333")),
+    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ("TOPPADDING", (0, 0), (-1, -1), 2),
+    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+]
+
+# Table cell styles; wordWrap="CJK" lets long unbroken tokens (path
+# segments, `a::b` node ids) break mid-token instead of overflowing.
+_CELL = ParagraphStyle("cell", fontSize=7, leading=8.5, wordWrap="CJK")
+_CELL_HEAD = ParagraphStyle("cellhead", parent=_CELL, textColor=colors.white)
 
 
 def generate_pdf_report(result: TestRunResult, output_path: Path) -> Path:
@@ -74,8 +91,7 @@ def generate_pdf_report(result: TestRunResult, output_path: Path) -> Path:
     story.append(meta_table)
     story.append(
         Paragraph(
-            "Purpose: findings for a developer to fix the DUT's network stack. "
-            "Failures first, full results next, spec references in the appendix.",
+            report_data.PURPOSE,
             ParagraphStyle("purpose", fontSize=8, textColor=colors.HexColor("#555555"), leading=10, spaceBefore=6),
         )
     )
@@ -122,8 +138,7 @@ def _findings_flowables(result: TestRunResult, styles) -> list:
     if not findings:
         return [
             Paragraph(
-                "No failures or errors — every test that ran passed. See the full results below "
-                "and the catalog in Appendix A.",
+                report_data.NO_FINDINGS,
                 ParagraphStyle("okmsg", parent=styles["BodyText"], textColor=colors.HexColor("#1a7f37")),
             )
         ]
@@ -132,8 +147,7 @@ def _findings_flowables(result: TestRunResult, styles) -> list:
     body = ParagraphStyle("fbody", fontSize=8, leading=10, wordWrap="CJK")
     flow = [
         Paragraph(
-            f"{len(findings)} test(s) failed or errored, most-severe first — each with the RFC clause "
-            "it exercises, what it checks, and what the DUT actually did.",
+            report_data.findings_intro(len(findings)),
             ParagraphStyle("intro", parent=styles["BodyText"], fontSize=9),
         ),
         Spacer(1, 0.08 * inch),
@@ -185,19 +199,15 @@ def _artifacts_flowables(result: TestRunResult, styles) -> list:
             f"{html.escape(result.run_id)}/</font>) in Wireshark:",
             body,
         ),
-        Paragraph("• <font face='Courier'>capture.pcap</font> — every frame sent/received.", body),
-        Paragraph(
-            "• <font face='Courier'>debug.log</font> — tshark-style per-packet trace (if Debug mode was on).",
-            body,
-        ),
-        Paragraph("• <font face='Courier'>pytest_output.log</font> — raw runner output.", body),
+        *[
+            Paragraph(f"• <font face='Courier'>{name}</font> — {html.escape(what)}", body)
+            for name, what in report_data.ARTIFACTS
+        ],
         Spacer(1, 0.05 * inch),
         Paragraph("Reproduce this run:", body),
         Paragraph(html.escape(report_data.reproduction_command(result)), mono),
         Paragraph(
-            f"Note: informational checks compare the DUT against the selected "
-            f"<b>{html.escape(result.target_stack)}</b> stack profile — a mismatch flags a behavioural "
-            "difference, not necessarily an RFC violation.",
+            html.escape(report_data.informational_note(result.target_stack)),
             ParagraphStyle("artnote", parent=body, textColor=colors.HexColor("#555555"), fontSize=8),
         ),
         Spacer(1, 0.2 * inch),
@@ -205,11 +215,9 @@ def _artifacts_flowables(result: TestRunResult, styles) -> list:
 
 
 def _catalog_flowables(styles) -> list:
-    cell = ParagraphStyle("ccell", fontSize=7, leading=8.5, wordWrap="CJK")
-    head = ParagraphStyle("chead", parent=cell, textColor=colors.white)
+    cell, head = _CELL, _CELL_HEAD
     intro = Paragraph(
-        "Every test in the suite, what it checks, the RFC clause it maps to, and its role(s). "
-        "Use this to map a finding to the spec and to see the full coverage.",
+        report_data.CATALOG_INTRO,
         ParagraphStyle("cintro", parent=styles["BodyText"], fontSize=9),
     )
     flow = [intro, Spacer(1, 0.1 * inch)]
@@ -233,19 +241,7 @@ def _catalog_flowables(styles) -> list:
                 ]
             )
         t = Table(rows, colWidths=[1.7 * inch, 3.0 * inch, 1.3 * inch, 0.5 * inch], repeatRows=1)
-        t.setStyle(
-            TableStyle(
-                [
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#333333")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 2),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                ]
-            )
-        )
+        t.setStyle(TableStyle(list(_TABLE_BASE)))
         flow.append(t)
         flow.append(Spacer(1, 0.12 * inch))
     return flow
@@ -255,7 +251,7 @@ def _rfc_flowables(styles) -> list:
     body = ParagraphStyle("rfcbody", parent=styles["BodyText"], fontSize=9, leading=13)
     flow = [
         Paragraph(
-            "Specifications exercised by this suite — the reading list for interpreting the findings.",
+            report_data.RFC_INTRO,
             ParagraphStyle("rintro", parent=styles["BodyText"], fontSize=9),
         ),
         Spacer(1, 0.08 * inch),
@@ -274,12 +270,10 @@ def _build_detail_table(result: TestRunResult) -> Table:
     """Per-test table with wrapping cells and outcome colouring.
 
     Cells are Paragraphs (not bare strings) so long node ids and messages
-    wrap inside their columns instead of overflowing; wordWrap="CJK" lets
-    long unbroken tokens (path segments, `a::b` node ids) break mid-token.
-    Column widths sum to the 6.5-inch usable width of a letter page.
+    wrap inside their columns instead of overflowing. Column widths sum to
+    the 6.5-inch usable width of a letter page.
     """
-    cell = ParagraphStyle("cell", fontSize=7, leading=8.5, wordWrap="CJK")
-    header = ParagraphStyle("cellhead", parent=cell, textColor=colors.white)
+    cell, header = _CELL, _CELL_HEAD
 
     def p(text: str, style: ParagraphStyle = cell) -> Paragraph:
         return Paragraph(html.escape(text or ""), style)
@@ -295,17 +289,7 @@ def _build_detail_table(result: TestRunResult) -> Table:
         colWidths=[3.0 * inch, 0.75 * inch, 0.75 * inch, 2.0 * inch],
         repeatRows=1,
     )
-    style = TableStyle(
-        [
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#333333")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]
-    )
+    style = TableStyle(list(_TABLE_BASE))
     for row_index, t in enumerate(result.tests, start=1):
         _, bg = _OUTCOME_COLORS.get(t.outcome, (None, None))
         if bg is not None:

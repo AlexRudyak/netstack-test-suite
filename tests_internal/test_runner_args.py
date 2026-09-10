@@ -4,7 +4,6 @@ report-log parsing helpers. No subprocess is spawned."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -19,6 +18,8 @@ from src.runner import (
     parse_report_log_line,
     read_new_lines,
 )
+
+from .conftest import make_run_result
 
 pytestmark = [pytest.mark.internal]
 
@@ -124,6 +125,29 @@ def test_dut_port_arg_is_opt_in(tmp_path: Path) -> None:
     assert not any(a.startswith("--dut-port=") for a in args)
     custom = DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux", target_port=8080)
     assert "--dut-port=8080" in build_pytest_args(RunRequest(config=custom), tmp_path)
+
+
+def test_only_none_means_unset_never_a_falsy_value(tmp_path: Path) -> None:
+    """Port 0 is forwarded, not dropped.
+
+    The flag table treats None as "unset" uniformly. Port 0 is a nonsense
+    DUT/proxy port, but forwarding it lets the subprocess fail visibly on it;
+    dropping it would silently run against a *different* port than the one
+    asked for, which is the harder failure to diagnose. An empty MAC string
+    is a different case — an unset text field — so it stays dropped.
+    """
+    config = DUTConfig(
+        interface="eth0", target_ip="10.0.0.5", target_stack="linux",
+        target_mac="", target_port=0, source_port=0,
+    )
+    args = build_pytest_args(
+        RunRequest(config=config, proxy_mode="socks5", proxy_port=0, backend_port=0), tmp_path
+    )
+    assert "--dut-port=0" in args
+    assert "--dut-source-port=0" in args
+    assert "--proxy-port=0" in args
+    assert "--backend-port=0" in args
+    assert not any(a.startswith("--dut-mac") for a in args)
 
 
 def test_random_ephemeral_port_is_in_iana_dynamic_range() -> None:
@@ -283,15 +307,57 @@ def test_parse_report_log_line_failed_captures_message() -> None:
     assert event.message == "assert False"
 
 
-def _run_result() -> TestRunResult:
-    return TestRunResult(
-        run_id="r",
-        started_at=datetime.now(timezone.utc),
-        finished_at=None,
-        target_ip="10.0.0.5",
-        target_stack="linux",
-        host_platform="TestOS",
+# --- _extract_message: the four shapes pytest serializes longrepr as -------
+# The most intricate logic in runner.py (highest cognitive-to-cyclomatic
+# ratio in the codebase). Each branch below is a real reportlog shape.
+
+
+def test_extract_message_handles_every_longrepr_shape() -> None:
+    def message_for(longrepr) -> str | None:
+        event = parse_report_log_line(_report_log_line(outcome="failed", longrepr=longrepr))
+        assert event is not None
+        return event.message
+
+    # dict: the normal failure shape.
+    assert message_for({"reprcrash": {"message": "assert 1 == 2"}}) == "assert 1 == 2"
+    # dict without reprcrash: no message rather than a KeyError.
+    assert message_for({"sections": []}) is None
+    # list of 3 with a trailing string: the skip shape.
+    assert message_for(["/p/test_x.py", 19, "Skipped: no DUT"]) == "Skipped: no DUT"
+    # list of another length: stringified whole, not silently dropped.
+    assert message_for(["a", "b"]) == str(["a", "b"])
+    # plain string: the LAST line carries the assertion, not the traceback head.
+    assert message_for("Traceback...\n  File x\nE   assert False") == "E   assert False"
+    # whitespace-only string is not a message.
+    assert message_for("   \n  ") is None
+    # absent/empty longrepr.
+    assert message_for(None) is None
+    assert message_for("") is None
+
+
+def test_passing_call_carries_no_message() -> None:
+    """Messages are only extracted for FAILED/ERROR/SKIPPED outcomes."""
+    event = parse_report_log_line(
+        _report_log_line(outcome="passed", longrepr={"reprcrash": {"message": "ignored"}})
     )
+    assert event is not None
+    assert event.message is None
+
+
+def test_non_testreport_lines_are_ignored() -> None:
+    """The report log also carries CollectReport and session lines."""
+    assert parse_report_log_line(json.dumps({"$report_type": "CollectReport"})) is None
+    assert parse_report_log_line(json.dumps({"nodeid": "x"})) is None
+
+
+def test_unknown_call_outcome_falls_back_to_error() -> None:
+    event = parse_report_log_line(_report_log_line(outcome="bogus"))
+    assert event is not None
+    assert event.outcome is TestOutcome.ERROR
+
+
+def _run_result() -> TestRunResult:
+    return make_run_result(run_id="r", finished_at=None)
 
 
 def test_drain_surfaces_setup_errors_as_error_events(tmp_path: Path) -> None:
@@ -343,14 +409,7 @@ def test_drain_upserts_worst_outcome_per_nodeid(tmp_path: Path) -> None:
 def test_drain_test_events_appends_and_calls_back(tmp_path: Path) -> None:
     path = tmp_path / "report_log.jsonl"
     path.write_text(_report_log_line() + "\n", encoding="utf-8")
-    result = TestRunResult(
-        run_id="r",
-        started_at=datetime.now(timezone.utc),
-        finished_at=None,
-        target_ip="10.0.0.5",
-        target_stack="linux",
-        host_platform="TestOS",
-    )
+    result = _run_result()
     seen = []
     offset = drain_test_events(path, 0, result, seen.append)
     assert len(result.tests) == 1
@@ -363,15 +422,7 @@ def test_drain_test_events_appends_and_calls_back(tmp_path: Path) -> None:
 
 def test_errored_property_reflects_returncode() -> None:
     def _result(code):
-        return TestRunResult(
-            run_id="r",
-            started_at=datetime.now(timezone.utc),
-            finished_at=None,
-            target_ip="10.0.0.5",
-            target_stack="linux",
-            host_platform="TestOS",
-            pytest_returncode=code,
-        )
+        return make_run_result(run_id="r", finished_at=None, pytest_returncode=code)
 
     assert _result(0).errored is False
     assert _result(1).errored is False  # test failures are not a run error

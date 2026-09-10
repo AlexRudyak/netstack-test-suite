@@ -4,14 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QPlainTextEdit
 
-from src.reporting.models import TestEvent, TestOutcome
-
-_OUTCOME_PREFIX = {
-    TestOutcome.PASSED: "PASS",
-    TestOutcome.FAILED: "FAIL",
-    TestOutcome.SKIPPED: "SKIP",
-    TestOutcome.ERROR: "ERR",
-}
+from src.reporting.models import TestEvent
 
 
 class LogPanel(QPlainTextEdit):
@@ -24,11 +17,7 @@ class LogPanel(QPlainTextEdit):
         self.appendPlainText(text)
 
     def append_test_event(self, event: TestEvent) -> None:
-        prefix = _OUTCOME_PREFIX.get(event.outcome, "?")
-        line = f"[{prefix:5}] {event.nodeid} ({event.duration_s:.3f}s)"
-        if event.message:
-            line += f" — {event.message}"
-        self.appendPlainText(line)
+        self.appendPlainText(event.summary_line(label_width=5))
 
     def clear_log(self) -> None:
         self.clear()

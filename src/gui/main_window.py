@@ -21,7 +21,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.config import DUTConfig, ProxyLeg, Role, random_ephemeral_port
+from src.config import (
+    DUTConfig,
+    ProxyLeg,
+    Role,
+    back_leg_requirement_error,
+    random_ephemeral_port,
+    resolve_leg_target,
+    resolve_role,
+)
 from src.gui.custom_packet_panel import CustomPacketPanel
 from src.gui.log_panel import LogPanel
 from src.gui.proxy_panel import ProxyBackendPanel
@@ -35,6 +43,7 @@ from src.plotting.metrics import MetricsBuffer
 from src.plotting.realtime_plotter import RealtimePlotWidget
 from src.reporting.models import PacketEvent, TestEvent, TestRunResult
 from src.runner import RunRequest
+from src.target_profiles import list_profiles
 
 
 class MainWindow(QMainWindow):
@@ -95,7 +104,7 @@ class MainWindow(QMainWindow):
             "port and reuses it for the whole session."
         )
         self._target_stack = QComboBox()
-        self._target_stack.addItems(["linux", "windows"])
+        self._target_stack.addItems(list_profiles())
         self._role = QComboBox()
         self._role.addItems([r.value for r in Role])
         self._role.setToolTip(
@@ -198,18 +207,20 @@ class MainWindow(QMainWindow):
     def _current_dut_config(self) -> DUTConfig:
         allowed = tuple(x.strip() for x in self._allowed_targets.text().split(",") if x.strip())
         leg = self._selected_proxy_leg()
-        target_ip = self._target_ip.text()
-        target_port = self._resolved_dst_port()
-        # A leg implies the role (you probe a front as a client, observe a
-        # back as a server), so it wins over the Role selector.
-        role = leg.implied_role if leg is not None else Role(self._role.currentText())
-        if leg is ProxyLeg.FRONT:
-            front_host, front_port = _split_host_port(self._proxy_front.text())
-            target_ip = front_host or target_ip
-            # An explicit Destination port still wins; 'random' would only
-            # measure closed-port behavior on the proxy's front.
-            if not self._dst_port.value() and front_port:
-                target_port = front_port
+        role = resolve_role(leg, Role(self._role.currentText()))
+        front_host, front_port = _split_host_port(self._proxy_front.text())
+        # `None` for a Destination port left on 'random' (spinbox 0), so a
+        # front leg can substitute the proxy's front port before we fall back
+        # to a session-stable random one.
+        target_ip, target_port = resolve_leg_target(
+            leg,
+            target_ip=self._target_ip.text(),
+            target_port=self._dst_port.value() or None,
+            proxy_host=front_host,
+            proxy_port=front_port,
+        )
+        if target_port is None:
+            target_port = self._resolved_dst_port()
         return DUTConfig(
             interface=self._iface_combo.currentText(),
             target_ip=target_ip,
@@ -240,30 +251,61 @@ class MainWindow(QMainWindow):
         self._right_tabs.setCurrentWidget(self._log_panel)
 
         config = self._current_dut_config()
+        if not self._report_topology(config):
+            return
+
+        if not self._preflight_and_report(config):
+            return
+        self._warn_role_mismatches(config)
+
+        request = self._build_run_request(config)
+        selection = ", ".join(request.targets) if request.targets else "all tests"
+        self._log_panel.append_line(f"Starting run (role={config.role.value}, selection: {selection})…")
+        if request.proxy_mode:
+            self._log_panel.append_line(
+                f"Proxy mode {request.proxy_mode}: "
+                f"front={request.proxy_host or '-'}:{request.proxy_port or '-'}, "
+                f"backend={request.backend_host or '-'}:{request.backend_port or '-'} "
+                "(the backend instance must be running)."
+            )
+        self._controller.start(request)
+
+    def _report_topology(self, config: DUTConfig) -> bool:
+        """Echo what the leg/port selectors resolved to and validate them.
+
+        Returns whether the run may proceed. The CLI's counterpart is
+        cli.main._resolve_topology, which applies the same rules from
+        src.config and raises click.UsageError instead of logging.
+        """
         leg = config.proxy_leg
         if leg is not None:
             self._log_panel.append_line(
                 f"Proxy leg '{leg.value}' — running the selected tests as {config.role.value} "
                 f"against {config.target_ip}:{config.target_port}."
             )
-        if leg is ProxyLeg.BACK and not (
-            self._proxy_mode.currentData() and _split_host_port(self._proxy_backend.text())[0]
-        ):
-            self._log_panel.append_line(
-                "Proxy leg 'back' needs a Proxy mode and a Proxy backend address: the back leg "
-                "is idle unless traffic is driven through the front, so the run has to induce it. "
-                "Not starting the run."
-            )
-            return
+        blocked = back_leg_requirement_error(
+            leg,
+            proxy_mode=self._proxy_mode.currentData(),
+            backend_host=_split_host_port(self._proxy_backend.text())[0],
+            mode_label="a Proxy mode",
+            host_label="a Proxy backend address",
+        )
+        if blocked:
+            self._log_panel.append_line(f"{blocked} Not starting the run.")
+            return False
         if not self._dst_port.value() and leg is not ProxyLeg.FRONT:
             self._log_panel.append_line(
                 f"Destination port left on 'random' — using {config.target_port} for this session."
             )
+        return True
 
-        # Preflight first: validate config + privileges and probe the DUT,
-        # reporting the outcome. Hard blockers abort before launching pytest;
-        # a no-ARP-reply warning still proceeds (a custom stack may not
-        # implement ARP).
+    def _preflight_and_report(self, config: DUTConfig) -> bool:
+        """Validate config + privileges and probe the DUT, reporting the
+        outcome into the Log tab. Returns whether the run may proceed.
+
+        Hard blockers abort before launching pytest; a no-ARP-reply warning
+        still proceeds (a custom stack may not implement ARP).
+        """
         self._log_panel.append_line("Preflight connectivity check…")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -274,10 +316,11 @@ class MainWindow(QMainWindow):
             self._log_panel.append_line("  " + line)
         if not pre.ok:
             self._log_panel.append_line("Preflight failed — not starting the run.")
-            return
+        return pre.ok
 
-        # Warn up front if a checked test won't run under the selected role
-        # (otherwise it just silently skips — the confusing case).
+    def _warn_role_mismatches(self, config: DUTConfig) -> None:
+        """Warn up front if a checked test won't run under the selected role
+        (otherwise it just silently skips — the confusing case)."""
         for spec in self._tree.checked_specs():
             if config.role not in spec.roles:
                 self._log_panel.append_line(
@@ -285,34 +328,24 @@ class MainWindow(QMainWindow):
                     f"'{config.role.value}' — it will be SKIPPED. Change the Role selector to run it."
                 )
 
-        targets = tuple(self._tree.checked_targets())
-        selection = ", ".join(targets) if targets else "all tests"
-        self._log_panel.append_line(f"Starting run (role={config.role.value}, selection: {selection})…")
-
-        proxy_mode = self._proxy_mode.currentData()
+    def _build_run_request(self, config: DUTConfig) -> RunRequest:
+        """Widget state → RunRequest. The GUI's counterpart to the request
+        construction in cli.main.run, against the same shared RunRequest."""
         proxy_host, proxy_port = _split_host_port(self._proxy_front.text())
         backend_host, backend_port = _split_host_port(self._proxy_backend.text())
-        if proxy_mode:
-            self._log_panel.append_line(
-                f"Proxy mode {proxy_mode}: front={proxy_host or '-'}:{proxy_port or '-'}, "
-                f"backend={backend_host or '-'}:{backend_port or '-'} "
-                "(the backend instance must be running)."
-            )
-
-        request = RunRequest(
+        return RunRequest(
             config=config,
-            targets=targets,
+            targets=tuple(self._tree.checked_targets()),
             confirm_vuln_tests=self._confirm_vuln.isChecked(),
             debug=self._debug.isChecked(),
             role=config.role,
-            proxy_mode=proxy_mode,
-            proxy_leg=leg.value if leg else None,
+            proxy_mode=self._proxy_mode.currentData(),
+            proxy_leg=config.proxy_leg.value if config.proxy_leg else None,
             proxy_host=proxy_host,
             proxy_port=proxy_port,
             backend_host=backend_host,
             backend_port=backend_port,
         )
-        self._controller.start(request)
 
     def _on_test_event(self, event: TestEvent) -> None:
         self._log_panel.append_test_event(event)
@@ -335,10 +368,7 @@ class MainWindow(QMainWindow):
                 "Run finished but no tests ran — check the test selection and configuration."
             )
         else:
-            self._log_panel.append_line(
-                f"Run finished: {result.passed} passed, {result.failed} failed, "
-                f"{result.errors} errored, {result.skipped} skipped, {result.total} total."
-            )
+            self._log_panel.append_line(f"Run finished: {result.counts_summary}.")
             if result.skipped and result.passed == 0 and result.failed == 0 and result.errors == 0:
                 self._log_panel.append_line(
                     "Everything selected was skipped — see the SKIP reason(s) above "

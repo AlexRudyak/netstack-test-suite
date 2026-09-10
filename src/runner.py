@@ -27,6 +27,7 @@ import platform
 import subprocess
 import sys
 import time
+import tomllib
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -51,26 +52,32 @@ def reports_dir() -> Path:
     """Writable directory for run artifacts (frozen-aware)."""
     return paths.reports_base() / "reports"
 
-# The markers we register (pyproject.toml). pytest's report-log "keywords"
-# dict is polluted with the nodeid, filename, and module name, so we filter
-# to this known set rather than treating every keyword as a marker.
-KNOWN_MARKERS = frozenset(
-    {
-        "ip",
-        "udp",
-        "tcp",
-        "icmp",
-        "proxy",
-        "syn",
-        "state_machine",
-        "congestion",
-        "vuln",
-        "slow",
-        "internal",
-        "client",
-        "server",
-    }
-)
+
+def _registered_markers() -> frozenset[str]:
+    """The markers declared in pyproject.toml.
+
+    pytest's report-log "keywords" dict is polluted with the nodeid,
+    filename and module name, so reports filter against this known set
+    rather than treating every keyword as a marker. Reading it from the
+    declaration means a marker registered in pyproject.toml can't be
+    forgotten here and silently vanish from every generated report.
+
+    pyproject.toml is bundled into the frozen build (NetstackTestSuite.spec),
+    so this resolves in both source and packaged modes. An unreadable file
+    yields an empty set — reports then show no markers, which is a cosmetic
+    loss, never a failed run.
+    """
+    try:
+        data = tomllib.loads(
+            (paths.project_root() / "pyproject.toml").read_text(encoding="utf-8")
+        )
+    except (OSError, tomllib.TOMLDecodeError):
+        return frozenset()
+    entries = data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
+    return frozenset(entry.split(":", 1)[0].strip() for entry in entries)
+
+
+KNOWN_MARKERS = _registered_markers()
 
 
 @dataclass
@@ -108,38 +115,72 @@ TestEventCallback = Callable[[TestEvent], None]
 PacketEventCallback = Callable[[PacketEvent], None]
 
 
+def _optional_flags(request: RunRequest) -> list[tuple[str, object | None]]:
+    """`--flag=value` pairs, emitted only when the value is not None.
+
+    Declared as data rather than one `if` per flag so that adding a
+    RunRequest field can't silently forget to forward it — a dropped option
+    produces a run that *succeeds* while ignoring the setting, which is the
+    worst failure shape available here.
+
+    The None-vs-falsy rule is uniform: only None means "unset". An empty
+    string is normalized to None (an unset text field, not a value), but a
+    port of 0 IS forwarded — silently substituting a different port than the
+    operator asked for is worse than letting the subprocess reject it.
+    """
+    return [
+        ("--dut-mac", request.config.target_mac or None),
+        # None ⇒ let the subprocess conftest pick one random port for its session.
+        ("--dut-port", request.config.target_port),
+        ("--dut-source-port", request.config.source_port),
+        ("--proxy-mode", request.proxy_mode or None),
+        ("--proxy-leg", request.proxy_leg or None),
+    ]
+
+
+def _topology_flags(request: RunRequest) -> list[tuple[str, object | None]]:
+    """The proxy front/backend addresses — see the call site for when these apply."""
+    return [
+        ("--proxy-host", request.proxy_host or None),
+        ("--proxy-port", request.proxy_port),
+        ("--backend-host", request.backend_host or None),
+        ("--backend-port", request.backend_port),
+    ]
+
+
+def _test_targets(request: RunRequest) -> list[str]:
+    """Positional pytest targets: explicit `targets` if given, else the
+    single module/submodule path (with test_name applied as a -k filter)."""
+    if request.targets:
+        return list(request.targets)
+    parts = ["tests", request.module, request.submodule]
+    return ["/".join(p for p in parts if p)]
+
+
+def _launcher() -> list[str]:
+    """How to invoke pytest, which differs between source and frozen builds.
+
+    Source: `python -m pytest`. Frozen: the exe has no `-m pytest`, so
+    re-invoke the exe with a sentinel that routes to pytest.main() (see
+    src/gui/app.py). The subprocess runs with cwd = project_root (set in
+    stream_run) so the relative test path resolves in both modes.
+
+    A frozen build also loses pytest's entry-point plugin discovery, so the
+    report-log plugin (which the whole progress stream depends on) must be
+    loaded explicitly with `-p`.
+    """
+    if paths.is_frozen():
+        return [sys.executable, paths.PYTEST_SENTINEL, "-p", "pytest_reportlog.plugin"]
+    return [sys.executable, "-m", "pytest"]
+
+
 def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
     """The canonical subprocess argument list — also used directly by
     gui/run_controller.py's QProcess invocation, so CLI and GUI runs are
     byte-for-byte the same command."""
-    # Positional pytest targets: explicit `targets` if given, else the
-    # single module/submodule path (with test_name as a -k filter below).
-    if request.targets:
-        test_targets = list(request.targets)
-    else:
-        parts = ["tests"]
-        if request.module:
-            parts.append(request.module)
-        if request.submodule:
-            parts.append(request.submodule)
-        test_targets = ["/".join(parts)]
-
-    # Source: `python -m pytest`. Frozen: the exe has no `-m pytest`, so
-    # re-invoke the exe with a sentinel that routes to pytest.main() (see
-    # src/gui/app.py). The subprocess runs with cwd = project_root (set in
-    # stream_run) so the relative test path resolves in both modes.
-    #
-    # A frozen build loses pytest's entry-point plugin discovery, so the
-    # report-log plugin (which the whole progress stream depends on) must be
-    # loaded explicitly with `-p`.
-    if paths.is_frozen():
-        launcher = [sys.executable, paths.PYTEST_SENTINEL, "-p", "pytest_reportlog.plugin"]
-    else:
-        launcher = [sys.executable, "-m", "pytest"]
-
     args = [
-        *launcher,
-        *test_targets,
+        *_launcher(),
+        *_test_targets(request),
         f"--report-log={run_dir / 'report_log.jsonl'}",
         f"--target-stack={request.config.target_stack}",
         f"--role={request.role.value}",
@@ -151,43 +192,33 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
         f"--capture-pcap={run_dir / 'capture.pcap'}",
         "-v",
     ]
-    if request.config.target_mac:
-        args.append(f"--dut-mac={request.config.target_mac}")
-    # None ⇒ let the subprocess conftest pick one random port for its session.
-    if request.config.target_port is not None:
-        args.append(f"--dut-port={request.config.target_port}")
-    if request.config.source_port is not None:
-        args.append(f"--dut-source-port={request.config.source_port}")
+    args += [f"{flag}={value}" for flag, value in _optional_flags(request) if value is not None]
+
+    # Two-token pytest flags, not the --flag=value form the table emits.
     if request.test_name:
         args += ["-k", request.test_name]
     if request.markers:
         args += ["-m", " and ".join(request.markers)]
+
     if request.confirm_vuln_tests:
         args.append("--confirm-vuln-tests")
     # The allow-list gates every `vuln`-marked test (src/utils/safety.py),
     # and it lives on the DUTConfig — forward each CIDR to the subprocess or
     # those tests error out with UnauthorizedTargetError despite the operator
     # having authorized the target. conftest's --allowed-targets is append.
-    for cidr in request.config.allowed_targets:
-        args.append(f"--allowed-targets={cidr}")
+    args += [f"--allowed-targets={cidr}" for cidr in request.config.allowed_targets]
     if request.debug:
         args.append(f"--debug-log={run_dir / 'debug.log'}")
-    if request.proxy_mode:
-        args.append(f"--proxy-mode={request.proxy_mode}")
-    if request.proxy_leg:
-        args.append(f"--proxy-leg={request.proxy_leg}")
+
     # The topology addresses are emitted whenever they're set, not only for
     # --proxy-mode: a front-leg run needs --proxy-host/--proxy-port to know
     # what to retarget to, even with no proxy-marked tests selected.
     if request.proxy_mode or request.proxy_leg:
-        if request.proxy_host:
-            args.append(f"--proxy-host={request.proxy_host}")
-        if request.proxy_port:
-            args.append(f"--proxy-port={request.proxy_port}")
-        if request.backend_host:
-            args.append(f"--backend-host={request.backend_host}")
-        if request.backend_port:
-            args.append(f"--backend-port={request.backend_port}")
+        args += [
+            f"{flag}={value}"
+            for flag, value in _topology_flags(request)
+            if value is not None
+        ]
     return args
 
 
@@ -196,6 +227,37 @@ def new_run_dir() -> tuple[str, Path]:
     run_dir = reports_dir() / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_id, run_dir
+
+
+def new_run_result(run_id: str, request: RunRequest) -> TestRunResult:
+    """The canonical run header both front ends start from.
+
+    Shared with gui/run_controller.py so a GUI-driven run and a CLI-driven
+    run describe themselves identically in results.json and the reports.
+    """
+    return TestRunResult(
+        run_id=run_id,
+        started_at=datetime.now(timezone.utc),
+        finished_at=None,
+        target_ip=request.config.target_ip,
+        target_stack=request.config.target_stack,
+        host_platform=platform.system(),
+        payload_mode=request.payload_mode.value,
+        role=request.role.value,
+        proxy_leg=request.proxy_leg,
+    )
+
+
+def finalize_run(result: TestRunResult, run_dir: Path, returncode: int | None) -> TestRunResult:
+    """Stamp the outcome and persist results.json — the file
+    reporting/collector.load_run_result() reads back to regenerate a report
+    without re-running the suite."""
+    result.pytest_returncode = returncode
+    result.finished_at = datetime.now(timezone.utc)
+    (run_dir / "results.json").write_text(
+        json.dumps(result.to_dict(), indent=2), encoding="utf-8"
+    )
+    return result
 
 
 def run_tests(
@@ -222,18 +284,7 @@ def stream_run(
     the completed run, which has also been written to results.json.
     """
     run_id, run_dir = new_run_dir()
-
-    result = TestRunResult(
-        run_id=run_id,
-        started_at=datetime.now(timezone.utc),
-        finished_at=None,
-        target_ip=request.config.target_ip,
-        target_stack=request.config.target_stack,
-        host_platform=platform.system(),
-        payload_mode=request.payload_mode.value,
-        role=request.role.value,
-        proxy_leg=request.proxy_leg,
-    )
+    result = new_run_result(run_id, request)
 
     args = build_pytest_args(request, run_dir)
 
@@ -261,10 +312,7 @@ def stream_run(
         report_offset = drain_test_events(report_log, report_offset, result, on_test_event)
         events_offset = drain_packet_events(events_log, events_offset, result, on_packet_event)
 
-    result.pytest_returncode = proc.returncode
-    result.finished_at = datetime.now(timezone.utc)
-    (run_dir / "results.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
-    yield result
+    yield finalize_run(result, run_dir, proc.returncode)
 
 
 # --- Shared file-tailing helpers -------------------------------------------

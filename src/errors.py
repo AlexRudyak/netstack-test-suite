@@ -68,6 +68,20 @@ class CaptureError(NetstackError):
     """A packet capture could not be started, or failed while running."""
 
 
+class ProtocolViolation(NetstackError, ValueError):
+    """The peer's bytes do not conform to the protocol's RFC.
+
+    Every parse failure in src/proxy/tunnel.py describes something the *DUT*
+    sent — a test result — but they were raised as bare ValueErrors, which a
+    caller cannot tell apart from a ValueError raised by a bug in our own
+    encoder. tests/proxy/ could not assert "the DUT violated RFC 1928" as
+    distinct from "our parser crashed".
+
+    Subclasses ValueError as well, so the handlers that already catch
+    ValueError around those calls keep working unchanged.
+    """
+
+
 class ProxyTunnelError(NetstackError):
     """The DUT refused or mishandled the tunnel-establishment handshake.
 

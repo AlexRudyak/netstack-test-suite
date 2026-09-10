@@ -13,6 +13,7 @@ import io
 
 import pytest
 
+from src.errors import ConfigurationError, ProtocolViolation
 from src.proxy import tunnel
 
 pytestmark = [pytest.mark.internal]
@@ -31,9 +32,12 @@ def test_socks5_greeting_bytes_match_rfc1928() -> None:
 
 
 def test_socks5_greeting_rejects_out_of_range_method_counts() -> None:
-    with pytest.raises(ValueError):
+    """An encoder input error, not something the DUT sent — so it is a
+    ConfigurationError, distinct from the ProtocolViolation the parsers
+    raise for the peer's bytes."""
+    with pytest.raises(ConfigurationError):
         tunnel.build_socks5_greeting([])
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfigurationError):
         tunnel.build_socks5_greeting([0x00] * 256)
 
 
@@ -167,3 +171,60 @@ def test_read_http_response_head_raises_on_early_close() -> None:
     stream = io.BytesIO(b"HTTP/1.1 200 OK\r\n")
     with pytest.raises(ConnectionError):
         tunnel.read_http_response_head(lambda n: stream.read(n))
+
+
+# --- Who was wrong: us, or the DUT? ---------------------------------------
+# Every parse failure here describes bytes the DUT sent, which is a test
+# result. Every encode failure describes our own input. Raised as bare
+# ValueErrors they were indistinguishable, so tests/proxy/ could not assert
+# "the DUT violated RFC 1928" apart from "our parser crashed".
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda: tunnel.parse_http_connect_response(b""), id="empty-http"),
+        pytest.param(
+            lambda: tunnel.parse_http_connect_response(b"NOTHTTP 200 OK\r\n\r\n"),
+            id="bad-status-line",
+        ),
+        pytest.param(
+            lambda: tunnel.parse_http_connect_response(b"HTTP/1.1 2O0 OK\r\n\r\n"),
+            id="non-numeric-status",
+        ),
+        pytest.param(
+            lambda: tunnel.parse_socks5_method_selection(b"\x04\x00"), id="wrong-socks-version"
+        ),
+        pytest.param(
+            lambda: tunnel.parse_socks5_method_selection(b"\x05"), id="short-method-selection"
+        ),
+        pytest.param(
+            lambda: tunnel.parse_socks5_userpass_result(b"\x01"), id="short-auth-result"
+        ),
+    ],
+)
+def test_the_dut_s_bad_bytes_are_a_protocol_violation(call) -> None:
+    with pytest.raises(ProtocolViolation):
+        call()
+
+
+def test_a_protocol_violation_is_still_a_value_error() -> None:
+    """Existing handlers catch ValueError around these calls."""
+    with pytest.raises(ValueError):
+        tunnel.parse_socks5_method_selection(b"\x04\x00")
+
+
+def test_our_own_bad_input_is_a_configuration_error() -> None:
+    with pytest.raises(ConfigurationError):
+        tunnel.build_socks5_userpass_auth("", "secret")
+    with pytest.raises(ConfigurationError):
+        tunnel.encode_socks5_address("x" * 300, 80)
+
+
+def test_a_truncated_socks5_domain_reply_is_not_an_index_error() -> None:
+    """`read` is contracted to raise on a short read; a reader returning b""
+    instead made this an IndexError no caller expects."""
+    reads = iter([b"\x05\x00\x00\x03", b""])
+
+    with pytest.raises(ConnectionError, match="domain length byte"):
+        tunnel.read_socks5_reply(lambda n: next(reads))

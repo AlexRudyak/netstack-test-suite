@@ -373,3 +373,50 @@ def test_a_bug_keeps_its_traceback(monkeypatch) -> None:
     result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "hi"))
 
     assert isinstance(result.exception, TypeError)
+
+
+# --- A failed report must not cost the run's verdict ----------------------
+
+
+def test_a_failing_report_generator_does_not_lose_the_exit_code(
+    monkeypatch, stub_result, tmp_path, capsys
+) -> None:
+    """The tests have already run against the DUT by this point — possibly
+    for an hour. A reportlab or matplotlib failure used to leave
+    _emit_results before its `return`, so the process exited on a traceback
+    instead of the run's real pass/fail code.
+    """
+    from src.reporting import formats
+    from src.reporting.models import TestEvent, TestOutcome
+
+    stub_result.tests.append(TestEvent("tests/x.py::t", TestOutcome.FAILED, 0.1))
+
+    def explode(_result, _path):
+        raise OSError("[Errno 13] Permission denied")
+
+    monkeypatch.setitem(
+        formats.BY_KEY, "pdf", formats.ReportFormat("pdf", "PDF", explode)
+    )
+
+    exit_code = cli_main._emit_results(stub_result, tmp_path, report="pdf", debug=False)
+
+    assert exit_code == 1, "a failed test run must still exit 1"
+    assert "Could not write the PDF report" in capsys.readouterr().err
+
+
+def test_a_failing_report_points_at_the_data_that_survived(
+    monkeypatch, stub_result, tmp_path, capsys
+) -> None:
+    """results.json is already written by finalize_run, so the report can be
+    regenerated without re-testing — the message has to say so."""
+    from src.reporting import formats
+
+    monkeypatch.setitem(
+        formats.BY_KEY,
+        "pdf",
+        formats.ReportFormat("pdf", "PDF", lambda r, p: (_ for _ in ()).throw(OSError("disk full"))),
+    )
+
+    cli_main._emit_results(stub_result, tmp_path, report="pdf", debug=False)
+
+    assert "results.json" in capsys.readouterr().err

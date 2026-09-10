@@ -432,3 +432,40 @@ def test_a_failed_launch_still_finalizes_the_run(qtbot, tmp_path, monkeypatch) -
     result = blocker.args[0]
     assert result.pytest_returncode is None  # the process never ran
     assert RunArtifacts(tmp_path).results.exists()
+
+
+def test_a_failing_export_warns_instead_of_taking_the_window_down(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    """_export is a `clicked` slot and the save dialog lets the operator pick
+    a destination they can't write to. An exception leaving the slot reaches
+    sys.excepthook and closes the window, over a failed export of a run whose
+    data is already on disk.
+    """
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    from src.gui.report_panel import ReportPanel
+    from src.reporting import formats
+
+    from .conftest import make_run_result
+
+    panel = ReportPanel()
+    qtbot.addWidget(panel)
+    panel.set_result(make_run_result(run_id="export-run"))
+
+    destination = tmp_path / "report.pdf"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(destination), ""))
+    )
+    warned: list = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a))
+    )
+
+    def explode(_result, _path):
+        raise OSError("[Errno 13] Permission denied")
+
+    panel._export(formats.ReportFormat("pdf", "PDF", explode))
+
+    assert warned, "the operator was not told the export failed"
+    assert "Could not write the PDF report" in panel._status_label.text()

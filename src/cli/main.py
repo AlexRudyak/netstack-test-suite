@@ -9,6 +9,7 @@ both front ends use).
 """
 from __future__ import annotations
 
+import logging
 import sys
 import time
 from pathlib import Path
@@ -40,6 +41,8 @@ from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest, run_tests
 from src.target_profiles import list_profiles
 from src.utils.logging_config import configure_logging
+
+log = logging.getLogger(__name__)
 
 
 # Derived from the catalog (which tests_internal AST-checks against the real
@@ -128,7 +131,18 @@ def _resolve_topology(
 
 
 def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
-    """Print the run's outcome, write the report, and return the exit code."""
+    """Print the run's outcome, write the report, and return the exit code.
+
+    Report generation is best-effort on purpose. By the time this runs the
+    tests have already executed against the DUT, and a run can take an hour
+    — so a reportlab or matplotlib failure (no write permission on reports/,
+    a full disk, a font problem) must not cost the operator the verdict.
+    It used to: the exception left this function before the `return`, so the
+    process exited on a traceback instead of the run's real pass/fail code.
+
+    results.json is already on disk by then, written by runner.finalize_run,
+    so the report can be regenerated without touching the DUT again.
+    """
     artifacts = RunArtifacts(run_dir)
     if result.errored:
         # pytest itself failed to run the tests (collection/usage error,
@@ -152,7 +166,17 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
         click.echo(f"Debug log: {artifacts.debug_log}")
     fmt = formats.BY_KEY.get(report)
     if fmt is not None:
-        click.echo(f"{fmt.label} report: {fmt.generate(result, artifacts.report(fmt.key))}")
+        try:
+            output = fmt.generate(result, artifacts.report(fmt.key))
+            click.echo(f"{fmt.label} report: {output}")
+        except Exception as exc:
+            log.exception("Report generation failed")
+            click.echo(
+                f"Could not write the {fmt.label} report: {exc}\n"
+                f"The run itself completed — its data is in {artifacts.results}, "
+                "and the report can be regenerated from it without re-testing.",
+                err=True,
+            )
 
     return 1 if (result.failed or result.errors) else 0
 

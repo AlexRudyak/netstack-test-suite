@@ -4,7 +4,6 @@ report-log parsing helpers. No subprocess is spawned."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -19,6 +18,8 @@ from src.runner import (
     parse_report_log_line,
     read_new_lines,
 )
+
+from .conftest import make_run_result
 
 pytestmark = [pytest.mark.internal]
 
@@ -284,14 +285,7 @@ def test_parse_report_log_line_failed_captures_message() -> None:
 
 
 def _run_result() -> TestRunResult:
-    return TestRunResult(
-        run_id="r",
-        started_at=datetime.now(timezone.utc),
-        finished_at=None,
-        target_ip="10.0.0.5",
-        target_stack="linux",
-        host_platform="TestOS",
-    )
+    return make_run_result(run_id="r", finished_at=None)
 
 
 def test_drain_surfaces_setup_errors_as_error_events(tmp_path: Path) -> None:
@@ -343,14 +337,7 @@ def test_drain_upserts_worst_outcome_per_nodeid(tmp_path: Path) -> None:
 def test_drain_test_events_appends_and_calls_back(tmp_path: Path) -> None:
     path = tmp_path / "report_log.jsonl"
     path.write_text(_report_log_line() + "\n", encoding="utf-8")
-    result = TestRunResult(
-        run_id="r",
-        started_at=datetime.now(timezone.utc),
-        finished_at=None,
-        target_ip="10.0.0.5",
-        target_stack="linux",
-        host_platform="TestOS",
-    )
+    result = _run_result()
     seen = []
     offset = drain_test_events(path, 0, result, seen.append)
     assert len(result.tests) == 1
@@ -363,15 +350,7 @@ def test_drain_test_events_appends_and_calls_back(tmp_path: Path) -> None:
 
 def test_errored_property_reflects_returncode() -> None:
     def _result(code):
-        return TestRunResult(
-            run_id="r",
-            started_at=datetime.now(timezone.utc),
-            finished_at=None,
-            target_ip="10.0.0.5",
-            target_stack="linux",
-            host_platform="TestOS",
-            pytest_returncode=code,
-        )
+        return make_run_result(run_id="r", finished_at=None, pytest_returncode=code)
 
     assert _result(0).errored is False
     assert _result(1).errored is False  # test failures are not a run error

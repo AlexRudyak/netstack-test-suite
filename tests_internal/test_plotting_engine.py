@@ -3,13 +3,14 @@ static_charts.py rendering with the Agg backend (headless, no display)."""
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 
 import pytest
 
 from src.plotting.metrics import MetricsBuffer
 from src.plotting.static_charts import render_packet_timeline, render_pass_fail_summary
 from src.reporting.models import PacketDirection, PacketEvent, TestEvent, TestOutcome, TestRunResult
+
+from .conftest import make_run_result
 
 pytestmark = [pytest.mark.internal]
 
@@ -40,14 +41,8 @@ def test_metrics_buffer_clear_resets_state() -> None:
 
 
 def _sample_result() -> TestRunResult:
-    now = datetime.now(timezone.utc)
-    return TestRunResult(
+    return make_run_result(
         run_id="unit-test-run",
-        started_at=now,
-        finished_at=now,
-        target_ip="10.0.0.5",
-        target_stack="linux",
-        host_platform="TestOS",
         tests=[
             TestEvent(nodeid="tests/ip/test_x.py::test_a", outcome=TestOutcome.PASSED, duration_s=0.1),
             TestEvent(

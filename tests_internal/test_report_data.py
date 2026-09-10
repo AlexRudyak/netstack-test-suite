@@ -13,6 +13,8 @@ from src.reporting.html_report import generate_html_report
 from src.reporting.models import PacketDirection, PacketEvent, TestEvent, TestOutcome, TestRunResult
 from src.reporting.pdf_report import generate_pdf_report
 
+from .conftest import make_run_result
+
 pytestmark = [pytest.mark.internal]
 
 
@@ -20,13 +22,7 @@ def _result() -> TestRunResult:
     now = datetime.now(timezone.utc)
     # Use a REAL cataloged nodeid so findings join to a catalog spec.
     real = catalog.CATALOG[0].nodeid
-    return TestRunResult(
-        run_id="r1",
-        started_at=now,
-        finished_at=now,
-        target_ip="10.0.0.5",
-        target_stack="linux",
-        host_platform="TestOS",
+    return make_run_result(
         tests=[
             TestEvent("tests/x.py::t_pass", TestOutcome.PASSED, 0.01),
             TestEvent(real, TestOutcome.FAILED, 0.02, message="AssertionError: boom"),

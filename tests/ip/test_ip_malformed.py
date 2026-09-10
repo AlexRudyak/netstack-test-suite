@@ -7,7 +7,6 @@ from scapy.layers.inet import ICMP, IP, fragment
 from scapy.packet import Raw
 
 from src.packet_engine.payloads import zeros
-from src.utils.safety import enforce_vuln_test_authorization
 
 pytestmark = [pytest.mark.ip]
 
@@ -19,7 +18,7 @@ OVERSIZED_PAYLOAD_BYTES = 65500
 @pytest.mark.vuln
 @pytest.mark.slow
 def test_oversized_reassembled_datagram_ping_of_death(
-    network_interface, craft, dut_config, confirm_vuln_tests, assert_dut_alive, nodeid
+    network_interface, craft, assert_dut_alive, nodeid
 ) -> None:
     """RFC 791's max IP datagram size is 65535 bytes. A stack that
     reassembles fragments into a buffer without checking this bound is
@@ -27,8 +26,6 @@ def test_oversized_reassembled_datagram_ping_of_death(
     size exceeds 65535 and verifies the DUT rejects/discards them rather
     than crashing (proven via a liveness ping immediately after).
     """
-    enforce_vuln_test_authorization(dut_config, confirmed=confirm_vuln_tests)
-
     full = IP(src=craft.local_ip, dst=craft.dut_ip) / ICMP() / zeros(OVERSIZED_PAYLOAD_BYTES)
     for frag in fragment(full, fragsize=1024):
         network_interface.send(craft.l3(frag), test_nodeid=nodeid)

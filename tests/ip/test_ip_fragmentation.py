@@ -6,7 +6,6 @@ import pytest
 from scapy.layers.inet import ICMP, IP, fragment
 
 from src.packet_engine.payloads import ones
-from src.utils.safety import enforce_vuln_test_authorization
 
 pytestmark = [pytest.mark.ip]
 
@@ -42,7 +41,7 @@ def test_fragmented_icmp_echo_reassembles_correctly(
 
 @pytest.mark.vuln
 def test_overlapping_fragments_teardrop_do_not_crash_dut(
-    network_interface, dut_config, craft, confirm_vuln_tests, assert_dut_alive, nodeid
+    network_interface, craft, assert_dut_alive, nodeid
 ) -> None:
     """Teardrop-class attack: two IP fragments with overlapping offsets
     that, on a vulnerable reassembly implementation, cause a
@@ -51,8 +50,6 @@ def test_overlapping_fragments_teardrop_do_not_crash_dut(
     proven here by the DUT still answering a plain ICMP echo immediately
     afterward.
     """
-    enforce_vuln_test_authorization(dut_config, confirmed=confirm_vuln_tests)
-
     base = IP(src=craft.local_ip, dst=craft.dut_ip, id=1234)
     frag1 = base / ICMP() / (b"A" * 32)
     frag1.flags = "MF"

@@ -138,8 +138,9 @@ Layer 4 is why the categories in `src/errors.py` stop mattering the moment a
 failure happens inside the pytest subprocess: `UnauthorizedTargetError`,
 `ConfigurationError` and an `AssertionError` all arrive at the parent as a
 string plus an outcome enum. That is a deliberate, sound design — but it means
-the *classification* work has to happen before the boundary, which is exactly
-what F-05 gets wrong.
+every bit of *classification* has to be spent before the boundary, into that
+one line of text. F-05 is a place where it is not: what the DUT reported is
+structured, in hand, and dropped.
 
 ### Recovery mechanisms that exist today
 
@@ -274,7 +275,7 @@ mid-run surprise; the other two fail fast, which is defensible.
 | F-02 | `Ctrl+C` during `netstack-cli run` leaves no `results.json` and prints a traceback | 6 | Recovery |
 | F-03 | Run-artifact filesystem failures have no category and no boundary; in the GUI they kill the process | 6 | File system |
 | F-04 | A user-initiated **Stop** is recorded as "pytest collection/usage error" | 5 | Information |
-| F-05 | The `proxy_client` fixture files a DUT tunnel refusal as a harness ERROR, not a test FAIL | 5 | Peer protocol |
+| F-05 | The `proxy_client` fixture lets a DUT tunnel refusal escape unhandled, losing its `details` (rating corrected: 5 → 2) | 2 | Peer protocol |
 | F-06 | `get_profile` raises a bare `ValueError` — outside the hierarchy | 4 | Lookup |
 | F-07 | `ProxyConfig.__post_init__` raises a bare `ValueError`; `ProxyMode(None)` is unguarded | 4 | Configuration |
 | F-08 | `_split_host_port` silently discards an unparseable port | 4 | Configuration |
@@ -552,7 +553,7 @@ add the corresponding line: "Run stopped — N tests completed before the stop."
 
 ---
 
-### F-05 — A DUT tunnel refusal is filed as a harness ERROR, not a test FAIL (severity 5)
+### F-05 — A DUT tunnel refusal escapes the fixture unhandled (severity 2, corrected from 5)
 
 `tests/proxy/conftest.py:55-67`:
 
@@ -568,34 +569,52 @@ add the corresponding line: "Run stopped — N tests completed before the stop."
 
 `ProxyTunnelError` — the class that exists precisely to say *"the DUT refused
 or mishandled the handshake"* (`errors.py:83`) — is **not** in that tuple. It
-derives from `NetstackError`, not `OSError`. So when the DUT answers CONNECT
-with 502, or SOCKS5 with `0x05 connection refused`, the fixture raises out of
-setup and every test using `proxy_client` is reported as an **ERROR**.
+derives from `NetstackError`, not `OSError`. Neither is `ProtocolViolation`
+(a `ValueError`), which is what `tunnel.py` raises when the DUT's bytes do not
+parse. Both escape the fixture uncaught.
 
-Downstream that means: `parse_report_log_line` maps a non-passing `setup` phase
-to `TestOutcome.ERROR` (`runner.py:472`); `TestRunResult.errors` counts it as
-"fixture/setup failure … distinct from `failed`" (`models.py:154`); and the
-report's error bucket — the one a reader scans for *suite* problems — fills up
-with what are actually *DUT conformance verdicts*. The operator also loses the
-carefully built message, including the CONNECT hint added at `handshakes.py:53`
-("the proxy requires authentication…", "is the backend instance running?").
+**Correction (applied while fixing this).** The finding as first written said
+the catch moves a refusal from the ERROR bucket to the FAIL bucket. That is
+wrong, and the fix does not do it. Verified directly: `pytest.fail()` called
+inside a fixture is reported as `ERROR at setup`, because the phase decides
+the bucket, not the exception type —
 
-Secondary: `ConnectionError` is a subclass of `OSError`, so the tuple's second
-member is redundant.
+```
+$ pytest test_x.py -q      # fixture body: pytest.fail("the DUT refused")
+ERROR test_x.py::test_uses_it - Failed: the DUT refused
+```
+
+— so both branches of this fixture always produced ERROR, and both still do.
+Establishing the tunnel is the fixture's entire purpose, so ERROR is in fact
+the accurate bucket for a DUT that will not establish one; the tests that
+assert on *how* a DUT refuses build their own client rather than using this
+fixture.
+
+What is genuinely wrong is narrower, and is what the fix addresses: the
+refusal escapes with no handler, so nothing surfaces `exc.details` — the
+parsed `HttpConnectResponse` / `Socks5Reply` the refusal assertions read, and
+the only structured record of what the DUT said. And `ConnectionError` is a
+subclass of `OSError`, so the tuple's second member is redundant.
+
+**Severity: 2, not 5.** The original rating was for the bucket change that
+turned out not to exist.
 
 **Remediation** — `tests/proxy/conftest.py`:
 
 ```python
-from src.errors import ProxyTunnelError
+from src.errors import ProtocolViolation, ProxyTunnelError
 
     client = ProxyClient(proxy_config)
     try:
         client.connect()
-    except ProxyTunnelError as exc:
-        # The DUT answered and refused: a conformance verdict, not a harness
-        # problem. Fail (not error) so it lands in the report's failure
-        # bucket, and keep `details` — the tests assert on what it reported.
-        pytest.fail(f"The proxy DUT refused the tunnel: {exc} (reported: {exc.details!r})")
+    except (ProxyTunnelError, ProtocolViolation) as exc:
+        # The DUT answered, and what it answered was a refusal or was not
+        # RFC-conformant. Keep `details` — the parsed response is otherwise
+        # nowhere in the output. Still an ERROR: the setup phase decides that.
+        pytest.fail(
+            f"The proxy DUT did not establish the tunnel: {exc} "
+            f"(it reported: {getattr(exc, 'details', None)!r})"
+        )
     except OSError as exc:  # ConnectionError is an OSError
         pytest.fail(
             f"Could not establish a tunnel through the proxy DUT at "
@@ -605,8 +624,8 @@ from src.errors import ProxyTunnelError
         )
 ```
 
-Both are `pytest.fail`, so both are FAILs rather than ERRORs; the split decides
-which message the operator gets.
+Both are `pytest.fail`, and both are reported as setup ERRORs; the split
+decides which message the operator gets, and whether `details` survives.
 
 ---
 

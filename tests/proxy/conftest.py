@@ -13,6 +13,7 @@ import socket
 
 import pytest
 
+from src.errors import ProtocolViolation, ProxyTunnelError
 from src.proxy.client import ProxyClient
 from src.proxy.config import ProxyConfig, ProxyMode
 
@@ -57,7 +58,23 @@ def proxy_client(proxy_config: ProxyConfig):
     client = ProxyClient(proxy_config)
     try:
         client.connect()
-    except (OSError, ConnectionError) as exc:
+    except (ProxyTunnelError, ProtocolViolation) as exc:
+        # The DUT answered, and what it answered was a refusal or was not
+        # RFC-conformant. Caught here so the report says which of the three
+        # things went wrong and carries what the DUT reported: `details` (the
+        # parsed CONNECT response or SOCKS5 reply) is otherwise nowhere in
+        # the output, and it is the field the refusal assertions read.
+        #
+        # This is still reported as an ERROR, not a FAIL: it happens in the
+        # setup phase, and pytest files everything that happens there as an
+        # error regardless of how it is raised. Establishing the tunnel is
+        # this fixture's whole purpose, so that is the accurate bucket — the
+        # tests that assert on *how* a DUT refuses build their own client.
+        pytest.fail(
+            f"The proxy DUT did not establish the tunnel: {exc} "
+            f"(it reported: {getattr(exc, 'details', None)!r})"
+        )
+    except OSError as exc:  # ConnectionError is an OSError
         pytest.fail(
             f"Could not establish a tunnel through the proxy DUT at "
             f"{proxy_config.dial_target[0]}:{proxy_config.dial_target[1]} "

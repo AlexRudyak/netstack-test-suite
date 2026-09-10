@@ -3,6 +3,8 @@ name = "netstack-test-suite"
 version = "0.1.0"
 description = "Modular RFC conformance and vulnerability test suite for a custom L3/L4 network stack, driven over real Ethernet via Scapy."
 requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = [
     "scapy>=2.5.0",
     "pytest>=8.0.0",

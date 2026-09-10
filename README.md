@@ -5,6 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 ![Interface](https://img.shields.io/badge/interface-CLI%20%2B%20GUI-brightgreen)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
 [![Conventional Commits](https://img.shields.io/badge/commits-conventional-fe5196)](https://www.conventionalcommits.org/en/v1.0.0/)
 [![Made with Claude](https://img.shields.io/badge/made%20with-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
@@ -147,3 +148,9 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.
 ```bash
 pytest tests_internal/
 ```
+
+## License
+
+Licensed under the GNU General Public License v3.0 or later
+([GPL-3.0-or-later](LICENSE)). The distributed binaries bundle Scapy,
+PySide6/Qt, and other dependencies under their own licenses.

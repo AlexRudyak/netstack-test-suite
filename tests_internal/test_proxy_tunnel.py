@@ -228,3 +228,53 @@ def test_a_truncated_socks5_domain_reply_is_not_an_index_error() -> None:
 
     with pytest.raises(ConnectionError, match="domain length byte"):
         tunnel.read_socks5_reply(lambda n: next(reads))
+
+
+# --- CONNECT refusals, named ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (407, "requires authentication"),
+        (403, "ruleset forbids"),
+        (405, "does not implement the CONNECT method"),
+        (502, "could not reach the origin"),
+        (504, "timed out reaching the origin"),
+    ],
+)
+def test_a_connect_refusal_says_what_the_status_means(status, expected) -> None:
+    """SOCKS5 already maps all nine RFC 1928 reply codes to text; without an
+    equivalent here a 407 read exactly like a 502."""
+    from src.errors import ProxyTunnelError
+    from src.proxy.handshakes import HttpConnectHandshake
+
+    class _Socket:
+        def sendall(self, data: bytes) -> None:
+            pass
+
+    response = f"HTTP/1.1 {status} Refused\r\n\r\n".encode()
+    reads = iter(response[i : i + 1] for i in range(len(response)))
+
+    with pytest.raises(ProxyTunnelError, match=expected) as caught:
+        HttpConnectHandshake().establish(_Socket(), lambda n: next(reads), ("10.0.0.9", 9099))
+
+    # The response object still rides along for the conformance assertions.
+    assert caught.value.details.status == status
+
+
+def test_an_unmapped_connect_status_still_reports_the_code() -> None:
+    from src.errors import ProxyTunnelError
+    from src.proxy.handshakes import HttpConnectHandshake
+
+    class _Socket:
+        def sendall(self, data: bytes) -> None:
+            pass
+
+    response = b"HTTP/1.1 418 I'm a teapot\r\n\r\n"
+    reads = iter(response[i : i + 1] for i in range(len(response)))
+
+    with pytest.raises(ProxyTunnelError, match="418") as caught:
+        HttpConnectHandshake().establish(_Socket(), lambda n: next(reads), ("10.0.0.9", 9099))
+
+    assert "—" not in str(caught.value), "no hint should be invented for an unmapped status"

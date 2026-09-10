@@ -196,7 +196,7 @@ class CustomPacketPanel(QWidget):
             # file, a host OS with no socket backend. The message names what
             # to fix, so it is the whole report.
             log.warning("Custom packet send rejected: %s", exc)
-            self._response_view.setPlainText(f"Error: {exc}")
+            self._response_view.setPlainText(exc.render())
         except Exception as exc:
             # A bug, or Scapy refusing the interface. Keeping the window is
             # right — this is a `clicked` slot, where an escape reaches

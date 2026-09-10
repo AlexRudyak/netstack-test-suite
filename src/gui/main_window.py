@@ -286,7 +286,7 @@ class MainWindow(QMainWindow):
             # A malformed field, reported where the operator is looking
             # instead of silently becoming an unset value. This is also a
             # `clicked` slot, so an escape here would end the process.
-            self._log_panel.append_line(f"{exc} Not starting the run.")
+            self._log_panel.append_line(f"{exc.render()} Not starting the run.")
             return
 
         selection = ", ".join(request.targets) if request.targets else "all tests"

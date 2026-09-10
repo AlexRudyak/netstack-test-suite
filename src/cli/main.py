@@ -80,7 +80,11 @@ class NetstackCLI(click.Group):
         try:
             return super().invoke(ctx)
         except NetstackError as exc:
-            click.echo(f"Error: {exc}", err=True)
+            # DEBUG, not WARNING: the console is already this boundary's
+            # output, so logging at INFO would print the same failure twice.
+            # `-v` turns this into the traceback the rendered line omits.
+            log.debug("Rendering %s at the CLI boundary", type(exc).__name__, exc_info=exc)
+            click.echo(exc.render(), err=True)
             raise SystemExit(exc.exit_code) from None
 
 

@@ -24,6 +24,19 @@ class NetstackError(Exception):
 
     exit_code: int = 1
 
+    def render(self, *, prefix: str = "Error") -> str:
+        """The one user-facing rendering, shared by every boundary.
+
+        Six surfaces had each invented their own — `Error: {exc}`,
+        `[FAIL] {msg}`, `Failed to start: {exc}` — so the same
+        ConfigurationError read differently depending on which one caught
+        it, and only two of the six named the type. The type is the part
+        that tells the operator what kind of thing went wrong:
+        ConfigurationError and UnauthorizedTargetError call for quite
+        different reactions.
+        """
+        return f"{prefix}: [{type(self).__name__}] {self}"
+
 
 class ConfigurationError(NetstackError):
     """Invalid or missing run configuration.

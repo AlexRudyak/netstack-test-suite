@@ -335,7 +335,10 @@ def test_unparseable_payload_hex_is_a_message_not_a_traceback() -> None:
     result = CliRunner().invoke(cli_main.cli, _send_args("--payload-hex", "zz"))
 
     assert result.exit_code == 2
-    assert "Error: payload hex is not valid hex" in result.output
+    # Rendered through NetstackError.render(), so the type is named: the
+    # operator can tell a ConfigurationError from an UnauthorizedTargetError
+    # without reading the wording.
+    assert "Error: [ConfigurationError] payload hex is not valid hex" in result.output
     assert "Traceback" not in result.output
 
 

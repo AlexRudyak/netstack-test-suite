@@ -141,3 +141,15 @@ def test_a_peer_that_hangs_up_is_both_a_violation_and_a_connection_error() -> No
     assert isinstance(exc, ConnectionError)  # what the existing handlers catch
     assert isinstance(exc, errors.ProtocolViolation)  # the DUT said something wrong
     assert isinstance(exc, errors.NetstackError)
+
+
+def test_render_names_the_type_and_is_shared_by_every_boundary() -> None:
+    """Six surfaces had each invented their own format, and only two named
+    the type — so the same failure read differently depending on which one
+    caught it."""
+    rendered = errors.ConfigurationError("payload hex is not valid hex").render()
+
+    assert rendered == "Error: [ConfigurationError] payload hex is not valid hex"
+    assert errors.UnauthorizedTargetError("out of range").render(prefix="Blocked").startswith(
+        "Blocked: [UnauthorizedTargetError]"
+    )

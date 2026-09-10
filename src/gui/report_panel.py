@@ -2,14 +2,13 @@
 run and shows the resulting output path."""
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from src.reporting.html_report import generate_html_report
+from src.reporting import formats
+from src.reporting.formats import ReportFormat
 from src.reporting.models import TestRunResult
-from src.reporting.pdf_report import generate_pdf_report
 from src.run_artifacts import RunArtifacts
 from src.runner import reports_dir
 
@@ -20,14 +19,15 @@ class ReportPanel(QWidget):
         self._result: TestRunResult | None = None
 
         self._status_label = QLabel("No completed run yet.")
-        pdf_button = QPushButton("Export PDF")
-        pdf_button.clicked.connect(self._export_pdf)
-        html_button = QPushButton("Export HTML")
-        html_button.clicked.connect(self._export_html)
 
+        # One button per declared format. `_checked` absorbs the bool Qt
+        # passes first, and `fmt=fmt` binds this iteration's format rather
+        # than closing over the loop variable.
         buttons = QHBoxLayout()
-        buttons.addWidget(pdf_button)
-        buttons.addWidget(html_button)
+        for fmt in formats.FORMATS:
+            button = QPushButton(f"Export {fmt.label}")
+            button.clicked.connect(lambda _checked=False, fmt=fmt: self._export(fmt))
+            buttons.addWidget(button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._status_label)
@@ -46,24 +46,22 @@ class ReportPanel(QWidget):
             summary = f"{result.counts_summary}."
         self._status_label.setText(f"Run {result.run_id}: {summary}")
 
-    def _export(self, *, suffix: str, label: str, generate: Callable[..., Path]) -> None:
+    def _export(self, fmt: ReportFormat) -> None:
         """Ask for a destination, generate, and report where it landed.
 
-        The PDF and HTML exports differ only in extension, dialog wording,
-        and which generator runs, so they share one flow.
+        The formats differ only in extension, dialog wording and generator —
+        all three of which the ReportFormat carries, so this is the whole
+        export flow for every format there is.
         """
         if self._result is None:
             return
-        default_path = RunArtifacts(reports_dir() / self._result.run_id).report(suffix)
+        default_path = RunArtifacts(reports_dir() / self._result.run_id).report(fmt.key)
         path_str, _ = QFileDialog.getSaveFileName(
-            self, f"Export {label} report", str(default_path), f"{label} files (*.{suffix})"
+            self,
+            f"Export {fmt.label} report",
+            str(default_path),
+            f"{fmt.label} files (*.{fmt.key})",
         )
         if path_str:
-            output = generate(self._result, Path(path_str))
-            self._status_label.setText(f"{label} written to {output}")
-
-    def _export_pdf(self) -> None:
-        self._export(suffix="pdf", label="PDF", generate=generate_pdf_report)
-
-    def _export_html(self) -> None:
-        self._export(suffix="html", label="HTML", generate=generate_html_report)
+            output = fmt.generate(self._result, Path(path_str))
+            self._status_label.setText(f"{fmt.label} written to {output}")

@@ -34,8 +34,7 @@ from src.packet_engine.preflight import run_preflight
 from src.packet_engine.recorder import PacketRecorder, build_host_filter
 from src.proxy.backend import EchoBackend
 from src.proxy.config import DEFAULT_BACKEND_PORT, ProxyMode
-from src.reporting.html_report import generate_html_report
-from src.reporting.pdf_report import generate_pdf_report
+from src.reporting import formats
 from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest, run_tests
 from src.target_profiles import list_profiles
@@ -128,10 +127,9 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
 
     if debug:
         click.echo(f"Debug log: {artifacts.debug_log}")
-    if report == "pdf":
-        click.echo(f"PDF report: {generate_pdf_report(result, artifacts.report('pdf'))}")
-    elif report == "html":
-        click.echo(f"HTML report: {generate_html_report(result, artifacts.report('html'))}")
+    fmt = formats.BY_KEY.get(report)
+    if fmt is not None:
+        click.echo(f"{fmt.label} report: {fmt.generate(result, artifacts.report(fmt.key))}")
 
     return 1 if (result.failed or result.errors) else 0
 
@@ -153,7 +151,7 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
     default=False,
     help="Write a tshark-style per-packet debug log to reports/<run_id>/debug.log.",
 )
-@click.option("--report", type=click.Choice(["pdf", "html", "none"]), default="pdf")
+@click.option("--report", type=click.Choice(formats.CLI_CHOICES), default="pdf")
 @click.option(
     "--skip-preflight",
     is_flag=True,

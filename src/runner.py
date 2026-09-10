@@ -294,7 +294,11 @@ def run_tests(
     result: TestRunResult | None = None
     for result in stream_run(request, on_test_event, on_packet_event):
         pass
-    assert result is not None
+    if result is None:
+        # A guard `python -O` cannot strip. stream_run always yields at least
+        # once, so this is unreachable — but stripped, the assert it replaces
+        # returned None to a caller annotated as returning a TestRunResult.
+        raise RunArtifactError("The run produced no result — the runner never started.")
     return result
 
 

@@ -700,3 +700,17 @@ def test_an_unexpected_custom_packet_failure_is_typed_and_logged(
     assert "OSError" in shown, "the operator cannot tell a bug from bad input"
     assert "no such device" in shown
     assert "Custom packet send failed" in caplog.text
+
+
+def test_controller_callbacks_are_safe_before_a_run_starts(qtbot) -> None:
+    """These were asserts, which `python -O` strips — leaving an
+    AttributeError on None inside a Qt slot, which ends the process. They
+    encode an ordering between separate callbacks, not a local invariant."""
+    from src.gui.run_controller import RunController
+
+    controller = RunController()
+
+    controller._drain()  # a poll with no run behind it
+    controller._on_output()  # output with no process
+
+    assert controller._report_offset == 0

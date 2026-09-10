@@ -121,7 +121,12 @@ class RunController(QObject):
             self.finished.emit(self._finalize(None))
 
     def _on_output(self) -> None:
-        assert self._process is not None
+        # Guards, not asserts: `python -O` strips those, and these encode an
+        # ordering between *separate callbacks* (start before poll/finish),
+        # not a local invariant. Stripped, they degrade into an
+        # AttributeError on None inside a Qt slot — which ends the process.
+        if self._process is None:
+            return
         data = bytes(self._process.readAllStandardOutput()).decode("utf-8", errors="replace")
         for line in data.splitlines():
             self.output_line.emit(line)
@@ -130,7 +135,8 @@ class RunController(QObject):
         self._drain()
 
     def _drain(self) -> None:
-        assert self._run_dir is not None and self._result is not None
+        if self._run_dir is None or self._result is None:
+            return  # a poll that outlived its run; there is nothing to tail
         artifacts = RunArtifacts(self._run_dir)
         self._report_offset = drain_test_events(
             artifacts.report_log,
@@ -175,7 +181,8 @@ class RunController(QObject):
         either way — what a failed write costs is the ability to re-open the
         run and regenerate its report later.
         """
-        assert self._result is not None and self._run_dir is not None
+        if self._result is None or self._run_dir is None:
+            raise RunArtifactError("There is no run to finalize; start() was never called.")
         try:
             return finalize_run(self._result, self._run_dir, returncode)
         except RunArtifactError as exc:

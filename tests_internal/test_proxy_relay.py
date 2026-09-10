@@ -381,8 +381,15 @@ def test_a_non_tunnel_error_also_releases_the_socket(backend, monkeypatch) -> No
 
 
 def test_explicit_mode_requires_a_front_address(backend) -> None:
-    with pytest.raises(ValueError, match="explicit proxy mode"):
+    """A ConfigurationError, so any caller can render it through the
+    boundary. It used to be a bare ValueError, which worked only because
+    the one caller — the proxy_config fixture — knew to catch that type."""
+    from src.errors import ConfigurationError, NetstackError
+
+    with pytest.raises(ConfigurationError, match="explicit proxy mode") as caught:
         ProxyConfig(mode=ProxyMode.SOCKS5, backend_host=LOOPBACK, backend_port=1)
+
+    assert isinstance(caught.value, NetstackError)
 
 
 def test_a_handshake_exists_for_every_proxy_mode() -> None:

@@ -6,6 +6,7 @@
 **Method:** full read of every `src/` module, `conftest.py`, `tests/conftest.py` and the three sub-conftests; every class and every dispatch site (`if`/`elif` chains over an `Enum` or a string discriminator) classified against the GoF creational/structural/behavioral catalogue and the Fowler PoEAA domain catalogue. Cross-module coupling and cycle claims were confirmed by grep over the import graph.
 
 **Severity scale:** 1 = cosmetic, 10 = actively causing defects.
+**Prompt source:** adapted from Jeremy Morgan's [Claude-Code-Reviewing-Prompts](https://github.com/JeremyMorgan/Claude-Code-Reviewing-Prompts) — see [README.md](README.md).
 
 ---
 

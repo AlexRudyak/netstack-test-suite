@@ -4,6 +4,7 @@
 **Commit:** `7100ad0` (branch `development`)
 **Scope:** all 12,454 lines of Python across `src/`, `tests/`, `tests_internal/`, `conftest.py`, `tools/`, `packaging/`.
 **Method:** a purpose-built AST pass over all 134 `.py` files (755 function/class definitions) computing, per function: McCabe cyclomatic complexity, a SonarSource-style cognitive complexity, maximum nesting depth of control structures, and physical line span. Coupling was computed by resolving every `import` / `from … import` (including the `from pkg import submodule` form) against the set of `src.*` modules, giving efferent coupling (Ce, `src/`-internal only), afferent coupling (Ca, counting `tests/` and `tests_internal/` importers too) and instability `I = Ce / (Ce + Ca)`. Coupling and cohesion findings were then confirmed by reading the modules involved.
+**Prompt source:** adapted from Jeremy Morgan's [Claude-Code-Reviewing-Prompts](https://github.com/JeremyMorgan/Claude-Code-Reviewing-Prompts) — see [README.md](README.md).
 
 > Reproduction: the analyzer is not checked in. Any of `radon cc -s src/`, `radon mi src/`, or `flake8 --max-complexity=10` reproduces the cyclomatic figures within ±1 (the ±1 is the usual disagreement over whether the function itself counts as a decision point; figures below count it).
 

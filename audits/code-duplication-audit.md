@@ -4,6 +4,7 @@
 **Commit:** `db76783` (branch `development`)
 **Scope:** all 12,162 lines of Python across `src/`, `tests/`, `tests_internal/`, `conftest.py`, `tools/`, `packaging/`, plus `pyproject.toml`, `NetstackTestSuite.spec` and `.github/workflows/`.
 **Method:** full read of every `src/` module and every test module; pattern counting with `grep` for repeated constants, call shapes and assertion idioms.
+**Prompt source:** adapted from Jeremy Morgan's [Claude-Code-Reviewing-Prompts](https://github.com/JeremyMorgan/Claude-Code-Reviewing-Prompts) — see [README.md](README.md).
 
 ---
 

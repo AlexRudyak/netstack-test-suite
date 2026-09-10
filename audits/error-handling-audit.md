@@ -12,6 +12,7 @@ venv (marked **Reproduced** below). Baseline before any change:
 `pytest tests_internal/ -q` → **220 passed**, `ruff check .` → clean.
 
 **Severity scale:** 1 = cosmetic, 10 = actively causing defects / safety-relevant.
+**Prompt source:** adapted from Jeremy Morgan's [Claude-Code-Reviewing-Prompts](https://github.com/JeremyMorgan/Claude-Code-Reviewing-Prompts) — see [README.md](README.md).
 
 ---
 

@@ -125,3 +125,40 @@ def test_no_pcap_writer_when_no_packets(monkeypatch, tmp_path) -> None:
     iface.close()
 
     assert opened["count"] == 0
+
+
+# --- packet sinks -----------------------------------------------------------
+
+
+def test_multiple_sinks_all_receive_each_packet(monkeypatch, stub_packet) -> None:
+    """`on_packet` was a single slot, so the GUI's live view and the jsonl
+    writer could not both subscribe — a second in-process consumer had to
+    displace the first."""
+    monkeypatch.setattr(
+        "src.packet_engine.interface.sendp", lambda pkt, iface, verbose: None
+    )
+
+    first: list = []
+    second: list = []
+    iface = NetworkInterface("dummy0", on_packet=first.append, backend=_StubBackend())
+    iface.subscribe(second.append)
+
+    iface.send(stub_packet, test_nodeid="unit")
+
+    assert len(first) == 1 and len(second) == 1
+    assert first[0].test_nodeid == "unit"
+    assert first[0] is second[0], "every sink should see the same event object"
+
+
+def test_subscribing_without_a_constructor_callback_works(monkeypatch, stub_packet) -> None:
+    monkeypatch.setattr(
+        "src.packet_engine.interface.sendp", lambda pkt, iface, verbose: None
+    )
+
+    seen: list = []
+    iface = NetworkInterface("dummy0", backend=_StubBackend())
+    iface.subscribe(seen.append)
+    iface.send(stub_packet)
+
+    assert len(seen) == 1
+    assert seen[0].direction is PacketDirection.SENT

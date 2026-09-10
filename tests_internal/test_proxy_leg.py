@@ -9,6 +9,7 @@ each of those, plus the pass-through from RunRequest to the subprocess.
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -35,16 +36,31 @@ def test_leg_implies_the_role_it_can_only_have() -> None:
     assert ProxyLeg.BACK.implied_role is Role.SERVER
 
 
-def test_leg_survives_config_round_trip(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    _config(proxy_leg=ProxyLeg.BACK).to_file(path)
-    assert DUTConfig.from_file(path).proxy_leg is ProxyLeg.BACK
+def test_leg_survives_config_round_trip() -> None:
+    """Through JSON, since that is what a persisted config would be."""
+    encoded = json.dumps(_config(proxy_leg=ProxyLeg.BACK).to_dict())
+    assert DUTConfig.from_dict(json.loads(encoded)).proxy_leg is ProxyLeg.BACK
 
 
-def test_absent_leg_round_trips_as_none(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    _config().to_file(path)
-    assert DUTConfig.from_file(path).proxy_leg is None
+def test_absent_leg_round_trips_as_none() -> None:
+    encoded = json.dumps(_config().to_dict())
+    assert DUTConfig.from_dict(json.loads(encoded)).proxy_leg is None
+
+
+def test_config_round_trip_covers_every_field() -> None:
+    """A field dropped from to_dict/from_dict is silent otherwise."""
+    config = _config(
+        target_mac="aa:bb:cc:dd:ee:ff",
+        target_port=8080,
+        source_port=41000,
+        timeout=9.5,
+        retries=7,
+        role=Role.SERVER,
+        proxy_leg=ProxyLeg.FRONT,
+        allowed_targets=("10.0.0.0/24",),
+    )
+    assert set(config.to_dict()) == {f.name for f in dataclasses.fields(DUTConfig)}
+    assert DUTConfig.from_dict(config.to_dict()) == config
 
 
 # --- runner pass-through ---------------------------------------------------

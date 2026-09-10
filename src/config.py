@@ -9,19 +9,15 @@ separate from `target_profiles/` (target_profiles.py) held: this describes
 from __future__ import annotations
 
 import ipaddress
-import json
 import secrets
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
-from pathlib import Path
 from typing import ClassVar, Literal
 
 # The profile names src/target_profiles/ ships. Kept as a Literal for type
 # checking; `target_profiles.list_profiles()` is the runtime source both
 # front ends build their choice lists from, so the two can't drift.
 TargetStackName = Literal["linux", "windows"]
-
-DEFAULT_CONFIG_PATH = Path.home() / ".netstack_test_suite" / "config.json"
 
 # IANA dynamic/ephemeral range — used when no destination port is configured.
 EPHEMERAL_PORT_RANGE = (49152, 65535)
@@ -204,41 +200,30 @@ class DUTConfig:
             for cidr in self.allowed_targets
         )
 
+    # --- serialization ------------------------------------------------------
+    # Derived from `fields()` rather than written out field-by-field: the
+    # field list used to be stated three times (here, to_file, from_file)
+    # and the two serializers silently dropped anything added to only one.
+    #
+    # These are plain DTO methods — no path, no file. The pair that took a
+    # `path` (defaulting to ~/.netstack_test_suite/config.json) made a
+    # frozen value object know where it lives, and had no production caller:
+    # neither front end offers save/load. If config persistence ships, the
+    # caller owns the path and writes `json.dumps(config.to_dict())`.
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["allowed_targets"] = list(self.allowed_targets)
+        data["role"] = self.role.value
+        data["proxy_leg"] = self.proxy_leg.value if self.proxy_leg else None
+        return data
+
     @classmethod
-    def from_file(cls, path: Path = DEFAULT_CONFIG_PATH) -> "DUTConfig":
-        data = json.loads(path.read_text(encoding="utf-8"))
+    def from_dict(cls, data: dict) -> "DUTConfig":
+        known = {f.name for f in fields(cls)} - {"allowed_targets", "role", "proxy_leg"}
         return cls(
-            interface=data["interface"],
-            target_ip=data["target_ip"],
-            target_stack=data["target_stack"],
-            target_mac=data.get("target_mac"),
-            target_port=data.get("target_port"),
-            source_port=data.get("source_port"),
-            timeout=data.get("timeout", 2.0),
-            retries=data.get("retries", 2),
-            allowed_targets=tuple(data.get("allowed_targets", [])),
+            **{k: v for k, v in data.items() if k in known},
+            allowed_targets=tuple(data.get("allowed_targets", ())),
             role=Role(data.get("role", "client")),
             proxy_leg=ProxyLeg(data["proxy_leg"]) if data.get("proxy_leg") else None,
-        )
-
-    def to_file(self, path: Path = DEFAULT_CONFIG_PATH) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "interface": self.interface,
-                    "target_ip": self.target_ip,
-                    "target_stack": self.target_stack,
-                    "target_mac": self.target_mac,
-                    "target_port": self.target_port,
-                    "source_port": self.source_port,
-                    "timeout": self.timeout,
-                    "retries": self.retries,
-                    "allowed_targets": list(self.allowed_targets),
-                    "role": self.role.value,
-                    "proxy_leg": self.proxy_leg.value if self.proxy_leg else None,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
         )

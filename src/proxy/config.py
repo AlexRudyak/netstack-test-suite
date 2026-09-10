@@ -19,6 +19,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+# Where the backend instance (`netstack-cli proxy-serve`, or the GUI's Proxy
+# Backend tab) listens by default. Referenced by the CLI, the GUI and the
+# pytest option defaults so the two instances agree without being told twice.
+DEFAULT_BACKEND_PORT = 9099
+
 
 class ProxyMode(Enum):
     """How the client instance reaches the origin through the DUT.

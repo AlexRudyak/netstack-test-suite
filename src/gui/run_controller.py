@@ -8,16 +8,21 @@ so the two front ends never drift into parsing results differently.
 """
 from __future__ import annotations
 
-import json
-import platform
-from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from src import paths
 from src.reporting.models import TestRunResult
-from src.runner import RunRequest, build_pytest_args, drain_packet_events, drain_test_events, new_run_dir
+from src.runner import (
+    RunRequest,
+    build_pytest_args,
+    drain_packet_events,
+    drain_test_events,
+    finalize_run,
+    new_run_dir,
+    new_run_result,
+)
 
 POLL_INTERVAL_MS = 200
 
@@ -44,17 +49,7 @@ class RunController(QObject):
         self._run_dir = run_dir
         self._report_offset = 0
         self._events_offset = 0
-        self._result = TestRunResult(
-            run_id=run_id,
-            started_at=datetime.now(timezone.utc),
-            finished_at=None,
-            target_ip=request.config.target_ip,
-            target_stack=request.config.target_stack,
-            host_platform=platform.system(),
-            payload_mode=request.payload_mode.value,
-            role=request.role.value,
-            proxy_leg=request.proxy_leg,
-        )
+        self._result = new_run_result(run_id, request)
 
         args = build_pytest_args(request, run_dir)
         self._process = QProcess(self)
@@ -99,9 +94,4 @@ class RunController(QObject):
         self._timer.stop()
         self._drain()
         assert self._result is not None and self._run_dir is not None
-        self._result.pytest_returncode = exit_code
-        self._result.finished_at = datetime.now(timezone.utc)
-        (self._run_dir / "results.json").write_text(
-            json.dumps(self._result.to_dict(), indent=2), encoding="utf-8"
-        )
-        self.finished.emit(self._result)
+        self.finished.emit(finalize_run(self._result, self._run_dir, exit_code))

@@ -10,14 +10,40 @@ import html
 from pathlib import Path
 
 from src.reporting import report_data
-from src.reporting.models import TestOutcome, TestRunResult
+from src.reporting.models import OUTCOME_STYLE, TestOutcome, TestRunResult
 
-_OUTCOME_CLASS = {
-    TestOutcome.PASSED: "passed",
-    TestOutcome.FAILED: "failed",
-    TestOutcome.ERROR: "error",
-    TestOutcome.SKIPPED: "skipped",
-}
+# CSS class per outcome, from the shared presentation table in
+# reporting/models.py — the same table the PDF report and the charts read.
+_OUTCOME_CLASS = {outcome: style["css"] for outcome, style in OUTCOME_STYLE.items()}
+
+
+def _palette_css() -> str:
+    """Every outcome-coloured rule, generated from the shared palette.
+
+    Kept out of the static stylesheet below so the hex values are stated in
+    exactly one place across the HTML report, the PDF report and the charts.
+    """
+    rules = []
+    for outcome, st in OUTCOME_STYLE.items():
+        cls, fg, bg = st["css"], st["fg"], st["bg"]
+        # PASSED tints only its outcome cell (a descendant selector), not the
+        # whole row — a mostly-passing report should not be a wall of green.
+        # Every other outcome tints the row, so a problem is scannable.
+        if outcome is TestOutcome.PASSED:
+            rules.append(f"tr.{cls} td.{cls} {{ background: {bg}; }}")
+        else:
+            rules.append(f"tr.{cls}, td.{cls} {{ background: {bg}; }}")
+        rules.append(f"td.{cls} {{ color: {fg}; }}")
+        rules.append(f".pill.{cls} {{ background: {bg}; color: {fg}; }}")
+        if outcome in (TestOutcome.FAILED, TestOutcome.ERROR):
+            rules.append(f".badge.{cls} {{ background: {fg}; }}")
+    failed = OUTCOME_STYLE[TestOutcome.FAILED]["fg"]
+    error = OUTCOME_STYLE[TestOutcome.ERROR]["fg"]
+    passed = OUTCOME_STYLE[TestOutcome.PASSED]["fg"]
+    rules.append(f".finding {{ border-left-color: {failed}; }}")
+    rules.append(f".finding.error {{ border-left-color: {error}; }}")
+    rules.append(f".ok {{ color: {passed}; font-weight: 600; }}")
+    return "\n".join(rules)
 
 
 def _e(text: object) -> str:
@@ -29,8 +55,7 @@ def _findings_section(result: TestRunResult) -> str:
     if not findings:
         return (
             "<section><h2>Findings</h2>"
-            "<p class='ok'>No failures or errors — every test that ran passed. "
-            "See the full results and appendix below.</p></section>"
+            f"<p class='ok'>{_e(report_data.NO_FINDINGS)}</p></section>"
         )
     cards = []
     for f in findings:
@@ -49,8 +74,7 @@ def _findings_section(result: TestRunResult) -> str:
         )
     return (
         "<section><h2>Findings — what to fix</h2>"
-        f"<p>{len(findings)} test(s) failed or errored, listed most-severe first. "
-        "Each names the RFC clause it exercises, what it checks, and what the DUT actually did.</p>"
+        f"<p>{_e(report_data.findings_intro(len(findings)))}</p>"
         + "".join(cards)
         + "</section>"
     )
@@ -79,23 +103,22 @@ def _summary_section(result: TestRunResult) -> str:
     </section>"""
 
 
+def _artifact_items() -> str:
+    return "".join(
+        f"<li><code>{_e(name)}</code> — {_e(what)}</li>" for name, what in report_data.ARTIFACTS
+    )
+
+
 def _artifacts_section(result: TestRunResult) -> str:
     return f"""
     <section>
       <h2>Artifacts &amp; reproduction</h2>
       <p>For wire-level analysis, open the packet capture from this run's folder
       (<code>reports/{_e(result.run_id)}/</code>) in Wireshark:</p>
-      <ul>
-        <li><code>capture.pcap</code> — every frame the suite sent and received.</li>
-        <li><code>debug.log</code> — tshark-style per-packet trace (present only if Debug mode was on).</li>
-        <li><code>pytest_output.log</code> — raw test-runner output.</li>
-        <li><code>results.json</code> — this run in machine-readable form.</li>
-      </ul>
+      <ul>{_artifact_items()}</ul>
       <p>Reproduce this run:</p>
       <pre>{_e(report_data.reproduction_command(result))}</pre>
-      <p class="note">Note: <em>informational</em> checks (e.g. advertised window size) compare the DUT
-      against the selected <strong>{_e(result.target_stack)}</strong> stack profile — a mismatch flags a
-      behavioural difference, not necessarily an RFC violation.</p>
+      <p class="note">{_e(report_data.informational_note(result.target_stack))}</p>
     </section>"""
 
 
@@ -134,8 +157,7 @@ def _appendix_catalog() -> str:
         )
     return (
         "<section><h2>Appendix A — Test catalog</h2>"
-        "<p>Every test in the suite, what it checks, the RFC clause it maps to, and which "
-        "role(s) it runs in. Use this to map a finding to the spec and to see what else is covered.</p>"
+        f"<p>{_e(report_data.CATALOG_INTRO)}</p>"
         + "".join(blocks)
         + "</section>"
     )
@@ -148,7 +170,7 @@ def _appendix_rfcs() -> str:
     )
     return (
         "<section><h2>Appendix B — RFC reference index</h2>"
-        "<p>Specifications exercised by this suite — the reading list for interpreting the findings.</p>"
+        f"<p>{_e(report_data.RFC_INTRO)}</p>"
         f"<ul class='rfcs'>{items}</ul></section>"
     )
 
@@ -165,25 +187,15 @@ th { background: #333; color: #fff; }
 table.meta th { width: 12rem; background: #f4f4f4; color: #222; }
 code { font-family: ui-monospace, Consolas, monospace; font-size: 0.82rem; word-break: break-all; }
 pre { background: #f4f4f4; padding: 0.6rem; border-radius: 4px; overflow-x: auto; font-size: 0.82rem; }
-tr.failed, td.failed { background: #ffebee; }
-tr.error, td.error { background: #f3e5f5; }
-tr.passed td.passed { background: #e8f5e9; }
-tr.skipped, td.skipped { background: #f5f5f5; }
-td.passed { color: #1a7f37; } td.failed { color: #b71c1c; } td.error { color: #8a1a9b; } td.skipped { color: #616161; }
-.finding { border: 1px solid #ddd; border-left: 5px solid #b71c1c; border-radius: 5px; padding: 0.7rem 0.9rem; margin: 0.7rem 0; background: #fff; }
-.finding.error { border-left-color: #8a1a9b; }
+.finding { border: 1px solid #ddd; border-left: 5px solid; border-radius: 5px; padding: 0.7rem 0.9rem; margin: 0.7rem 0; background: #fff; }
 .finding-head { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
 .finding-title { font-weight: 700; font-size: 1.02rem; }
 .finding-rfc { margin-left: auto; color: #555; font-size: 0.82rem; }
 .finding-node code { color: #444; }
 .finding-desc, .finding-msg { margin-top: 0.3rem; font-size: 0.88rem; }
 .badge { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; padding: 1px 7px; border-radius: 10px; color: #fff; }
-.badge.failed { background: #b71c1c; } .badge.error { background: #8a1a9b; }
 .pill { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 0.8rem; margin-right: 4px; background: #eee; }
-.pill.passed { background: #e8f5e9; color: #1a7f37; } .pill.failed { background: #ffebee; color: #b71c1c; }
-.pill.error { background: #f3e5f5; color: #8a1a9b; } .pill.skipped { background: #f5f5f5; color: #616161; }
 .note { color: #555; font-size: 0.85rem; }
-.ok { color: #1a7f37; font-weight: 600; }
 ul.rfcs li { margin: 0.2rem 0; }
 @media (prefers-color-scheme: dark) {
   body { background: #1e1e1e; color: #e6e6e6; }
@@ -198,10 +210,11 @@ def generate_html_report(result: TestRunResult, output_path: Path) -> Path:
     html_doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>Netstack DUT Report — {_e(result.run_id)}</title>
-<style>{_STYLE}</style></head>
+<style>{_STYLE}
+{_palette_css()}</style></head>
 <body>
 <h1>Network Stack Conformance Report</h1>
-<p class="note">Purpose: findings for a developer to fix the DUT's network stack. Failures first, full results next, spec references in the appendix.</p>
+<p class="note">{_e(report_data.PURPOSE)}</p>
 {_summary_section(result)}
 {_findings_section(result)}
 {_artifacts_section(result)}

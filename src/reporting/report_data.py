@@ -35,6 +35,55 @@ RFC_TITLES: dict[str, str] = {
 
 _SEVERITY = {TestOutcome.ERROR: 0, TestOutcome.FAILED: 1}
 
+# --- Report copy ------------------------------------------------------------
+# The HTML and PDF generators render the same document in two formats, so the
+# wording lives here rather than being maintained twice (it had already
+# drifted: the two "no failures" lines pointed the reader at different
+# sections, and only the HTML artifact list mentioned results.json).
+
+PURPOSE = (
+    "Purpose: findings for a developer to fix the DUT's network stack. "
+    "Failures first, full results next, spec references in the appendix."
+)
+
+NO_FINDINGS = (
+    "No failures or errors — every test that ran passed. See the full results "
+    "below and the test catalog in Appendix A."
+)
+
+CATALOG_INTRO = (
+    "Every test in the suite, what it checks, the RFC clause it maps to, and which "
+    "role(s) it runs in. Use this to map a finding to the spec and to see what else "
+    "is covered."
+)
+
+RFC_INTRO = (
+    "Specifications exercised by this suite — the reading list for interpreting the findings."
+)
+
+# (filename, what it holds) for the artifacts section.
+ARTIFACTS: tuple[tuple[str, str], ...] = (
+    ("capture.pcap", "every frame the suite sent and received."),
+    ("debug.log", "tshark-style per-packet trace (present only if Debug mode was on)."),
+    ("pytest_output.log", "raw test-runner output."),
+    ("results.json", "this run in machine-readable form."),
+)
+
+
+def findings_intro(count: int) -> str:
+    return (
+        f"{count} test(s) failed or errored, listed most-severe first. Each names the RFC "
+        "clause it exercises, what it checks, and what the DUT actually did."
+    )
+
+
+def informational_note(target_stack: str) -> str:
+    return (
+        "Note: informational checks (e.g. advertised window size) compare the DUT against "
+        f"the selected {target_stack} stack profile — a mismatch flags a behavioural "
+        "difference, not necessarily an RFC violation."
+    )
+
 
 @dataclass
 class Finding:

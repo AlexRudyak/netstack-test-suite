@@ -12,6 +12,8 @@ import platform
 import subprocess
 import sys
 
+from src.packet_engine.platform_backend import unsupported_host_message
+
 
 class InsufficientPrivilegesError(RuntimeError):
     pass
@@ -30,7 +32,7 @@ def is_elevated() -> bool:
         if os.geteuid() == 0:
             return True
         return _has_linux_capabilities()
-    raise RuntimeError(f"Unsupported host platform: {system!r}")
+    raise RuntimeError(unsupported_host_message(system))
 
 
 def _has_linux_capabilities() -> bool:
@@ -61,7 +63,7 @@ def remediation_message() -> str:
             "the GUI as root is discouraged) grant capabilities once to the "
             f"interpreter:\n  sudo setcap cap_net_raw,cap_net_admin+eip {interpreter}"
         )
-    return f"Unsupported host platform: {system!r}"
+    return unsupported_host_message(system)
 
 
 def require_elevation() -> None:

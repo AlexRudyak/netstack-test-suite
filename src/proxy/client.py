@@ -15,6 +15,7 @@ import socket
 from dataclasses import dataclass
 
 from src.proxy import tunnel
+from src.proxy.backend import RECV_CHUNK
 from src.proxy.config import ProxyConfig, ProxyMode
 
 
@@ -158,7 +159,7 @@ class ProxyClient:
         buffer = bytearray()
         while len(buffer) < limit:
             try:
-                chunk = self.socket.recv(65536)
+                chunk = self.socket.recv(RECV_CHUNK)
             except socket.timeout:
                 break
             if not chunk:

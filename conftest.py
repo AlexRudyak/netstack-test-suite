@@ -2,9 +2,12 @@
 fixtures every test module builds on (DUT config, target profile, the
 live Ethernet interface, payload settings).
 
-The option names registered here and the subprocess flags src/runner.py
-emits must stay in lockstep — runner.py is the canonical caller of this
-CLI surface for both the CLI and the GUI front ends.
+The options this surface shares with `netstack-cli run` are declared once
+in src/cli/options.py and registered on both, so the two can't drift. The
+options below are the ones genuinely local to pytest (or spelled
+differently here) — see that module's docstring for why each is excluded.
+src/runner.py is the canonical caller of this CLI surface for both front
+ends, and emits the matching subprocess flags.
 
 None of these options are `required=True`: tests_internal/ must be able
 to run standalone (self-validation, no DUT involved) without supplying
@@ -19,12 +22,31 @@ from pathlib import Path
 
 import pytest
 
-from src.config import DUTConfig, ProxyLeg, Role, random_ephemeral_port
+from src.cli.options import register_pytest_options, shared_options
+from src.config import (
+    DUTConfig,
+    ProxyLeg,
+    Role,
+    random_ephemeral_port,
+    resolve_leg_target,
+    resolve_role,
+)
 from src.packet_engine.interface import NetworkInterface
 from src.packet_engine.payloads import PayloadMode
-from src.proxy.config import ProxyConfig, ProxyMode
+from src.proxy.config import DEFAULT_BACKEND_PORT, ProxyConfig, ProxyMode
 from src.reporting.collector import PacketEventLogWriter
-from src.target_profiles import TargetProfile, get_profile
+from src.target_profiles import TargetProfile, get_profile, list_profiles
+
+
+# Declared once in src/cli/options.py and registered on both this surface
+# and `netstack-cli run`, so the two can't drift apart.
+SHARED_OPTIONS = shared_options(
+    role_choices=tuple(r.value for r in Role),
+    payload_modes=tuple(m.value for m in PayloadMode),
+    proxy_modes=tuple(m.value for m in ProxyMode),
+    proxy_legs=tuple(leg.value for leg in ProxyLeg),
+    backend_port=DEFAULT_BACKEND_PORT,
+)
 
 
 def selected_proxy_leg(config: pytest.Config) -> ProxyLeg | None:
@@ -33,17 +55,8 @@ def selected_proxy_leg(config: pytest.Config) -> ProxyLeg | None:
 
 
 def effective_role(config: pytest.Config) -> Role:
-    """The role the run actually plays.
-
-    Targeting a proxy leg determines the role unambiguously — you probe a
-    proxy's front as a client and observe its back as a server — so
-    --proxy-leg takes precedence over --role rather than making the
-    operator keep the two in sync.
-    """
-    leg = selected_proxy_leg(config)
-    if leg is not None:
-        return leg.implied_role
-    return Role(config.getoption("--role"))
+    """The role this run plays — see `src.config.resolve_role`."""
+    return resolve_role(selected_proxy_leg(config), Role(config.getoption("--role")))
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -89,66 +102,18 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("netstack")
+    register_pytest_options(group, SHARED_OPTIONS)
+
+    # pytest-only, or spelled differently here than on the CLI — see the
+    # module docstring of src/cli/options.py for why each is not shared.
     group.addoption(
         "--target-stack",
-        choices=["linux", "windows"],
+        choices=list_profiles(),
         default=None,
         help="Behavioral profile to assert stack-characteristic checks against.",
     )
-    group.addoption(
-        "--role",
-        choices=[r.value for r in Role],
-        default="client",
-        help="Which side the suite plays: client (initiator) or server (responder). "
-        "Tests not marked for the selected role are skipped.",
-    )
-    group.addoption(
-        "--proxy-mode",
-        choices=[m.value for m in ProxyMode],
-        default=None,
-        help="Enable the proxy-DUT tests and select how the client reaches the origin: "
-        "transparent (inline DUT), http-connect (RFC 9110/9112), socks5 (RFC 1928). "
-        "Requires a second app instance running `proxy-serve` as the backend.",
-    )
-    group.addoption(
-        "--proxy-leg",
-        choices=[leg.value for leg in ProxyLeg],
-        default=None,
-        help="Point the ORDINARY endpoint suites (ip/udp/icmp/tcp) at one leg of a proxy DUT: "
-        "'front' probes its client-facing stack (implies --role client, and retargets to "
-        "--proxy-host/--proxy-port); 'back' observes the stack it dials origins with "
-        "(implies --role server; set --dut-ip to the proxy's back-side address).",
-    )
-    group.addoption("--proxy-host", default=None, help="Proxy DUT front address (explicit modes).")
-    group.addoption("--proxy-port", type=int, default=None, help="Proxy DUT front port (explicit modes).")
-    group.addoption(
-        "--backend-host",
-        default=None,
-        help="Origin/backend address the DUT must reach — where the backend instance listens.",
-    )
-    group.addoption("--backend-port", type=int, default=9099, help="Backend instance listen port.")
     group.addoption("--dut-ip", default=None, help="DUT IP address.")
     group.addoption("--dut-iface", default=None, help="Local Ethernet interface facing the DUT.")
-    group.addoption("--dut-mac", default=None, help="DUT MAC address.")
-    group.addoption(
-        "--dut-port",
-        type=int,
-        default=None,
-        help="DUT port for tests that need one. Omitted: a random ephemeral port is "
-        "chosen once for the whole session.",
-    )
-    group.addoption(
-        "--dut-source-port",
-        type=int,
-        default=None,
-        help="Optional fixed local source port for tests that honor it (default: per-test).",
-    )
-    group.addoption(
-        "--payload-mode",
-        choices=[m.value for m in PayloadMode],
-        default="random",
-    )
-    group.addoption("--payload-size", type=int, default=64)
     group.addoption("--payload-text", default=None, help="Custom payload as text (payload-mode=custom).")
     group.addoption("--payload-hex", default=None, help="Custom payload as hex (payload-mode=custom).")
     group.addoption("--payload-file", default=None, help="Custom payload loaded from a file (payload-mode=custom).")
@@ -184,37 +149,22 @@ def dut_config(pytestconfig: pytest.Config) -> DUTConfig:
     target_stack = pytestconfig.getoption("--target-stack")
     leg = selected_proxy_leg(pytestconfig)
 
-    # Front leg: the ordinary suites probe the proxy's client-facing stack,
-    # so retarget to its front address rather than making the operator pass
-    # the same host twice.
-    if leg is ProxyLeg.FRONT:
-        target_ip = pytestconfig.getoption("--proxy-host") or target_ip
+    # A front leg retargets to the proxy's front address/port rather than
+    # making the operator pass the same host twice (src.config's rule).
+    target_ip, target_port = resolve_leg_target(
+        leg,
+        target_ip=target_ip,
+        target_port=pytestconfig.getoption("--dut-port"),
+        proxy_host=pytestconfig.getoption("--proxy-host"),
+        proxy_port=pytestconfig.getoption("--proxy-port"),
+    )
 
-    missing = [
-        flag
-        for flag, value in (
-            ("--dut-ip", target_ip),
-            ("--dut-iface", iface),
-            ("--target-stack", target_stack),
-        )
-        if not value
-    ]
-    if missing:
-        pytest.fail(
-            "This test requires a DUT target, missing: "
-            f"{', '.join(missing)}. (Running tests_internal/ alone needs none of these.)"
-        )
-    # Unspecified destination port ⇒ one random ephemeral port for the whole
-    # session (this fixture is session-scoped, so it's resolved exactly once).
-    target_port = pytestconfig.getoption("--dut-port")
-    if leg is ProxyLeg.FRONT and target_port is None:
-        # The proxy's front port is the one port we *know* is open; a random
-        # ephemeral one would just measure closed-port behavior.
-        target_port = pytestconfig.getoption("--proxy-port")
+    # Still unspecified ⇒ one random ephemeral port for the whole session
+    # (this fixture is session-scoped, so it's resolved exactly once).
     if target_port is None:
         target_port = random_ephemeral_port()
 
-    return DUTConfig(
+    config = DUTConfig(
         interface=iface,
         target_ip=target_ip,
         target_stack=target_stack,
@@ -225,6 +175,14 @@ def dut_config(pytestconfig: pytest.Config) -> DUTConfig:
         role=effective_role(pytestconfig),
         proxy_leg=leg,
     )
+
+    missing = config.missing_required()
+    if missing:
+        pytest.fail(
+            "This test requires a DUT target, missing: "
+            f"{', '.join(missing)}. (Running tests_internal/ alone needs none of these.)"
+        )
+    return config
 
 
 @pytest.fixture(scope="session")

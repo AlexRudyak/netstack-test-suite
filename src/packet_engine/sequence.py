@@ -4,7 +4,9 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-MAX_SEQ = 2**32 - 1
+from src.utils.tcp_flags import MAX_SEQ, seq32
+
+__all__ = ["MAX_SEQ", "TCPSequenceTracker"]
 
 
 @dataclass
@@ -27,9 +29,9 @@ class TCPSequenceTracker:
     def on_send(self, payload_len: int, *, syn: bool = False, fin: bool = False) -> int:
         """Returns the seq number used for the segment just sent, then advances."""
         sent_seq = self.seq
-        self.seq = (self.seq + payload_len + (1 if syn or fin else 0)) & MAX_SEQ
+        self.seq = seq32(self.seq + payload_len + (1 if syn or fin else 0))
         return sent_seq
 
     def on_receive(self, remote_seq: int, payload_len: int, *, syn: bool = False, fin: bool = False) -> None:
         """Updates our ack to acknowledge a received segment."""
-        self.ack = (remote_seq + payload_len + (1 if syn or fin else 0)) & MAX_SEQ
+        self.ack = seq32(remote_seq + payload_len + (1 if syn or fin else 0))

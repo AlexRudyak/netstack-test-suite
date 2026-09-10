@@ -22,6 +22,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from src.proxy.config import DEFAULT_BACKEND_PORT
+
 RECV_CHUNK = 65536
 
 
@@ -54,7 +56,7 @@ class EchoBackend:
     def __init__(
         self,
         host: str = "0.0.0.0",
-        port: int = 9099,
+        port: int = DEFAULT_BACKEND_PORT,
         *,
         enable_udp: bool = False,
         on_event: Callable[[str], None] | None = None,

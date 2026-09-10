@@ -27,6 +27,7 @@ import platform
 import subprocess
 import sys
 import time
+import tomllib
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -51,26 +52,32 @@ def reports_dir() -> Path:
     """Writable directory for run artifacts (frozen-aware)."""
     return paths.reports_base() / "reports"
 
-# The markers we register (pyproject.toml). pytest's report-log "keywords"
-# dict is polluted with the nodeid, filename, and module name, so we filter
-# to this known set rather than treating every keyword as a marker.
-KNOWN_MARKERS = frozenset(
-    {
-        "ip",
-        "udp",
-        "tcp",
-        "icmp",
-        "proxy",
-        "syn",
-        "state_machine",
-        "congestion",
-        "vuln",
-        "slow",
-        "internal",
-        "client",
-        "server",
-    }
-)
+
+def _registered_markers() -> frozenset[str]:
+    """The markers declared in pyproject.toml.
+
+    pytest's report-log "keywords" dict is polluted with the nodeid,
+    filename and module name, so reports filter against this known set
+    rather than treating every keyword as a marker. Reading it from the
+    declaration means a marker registered in pyproject.toml can't be
+    forgotten here and silently vanish from every generated report.
+
+    pyproject.toml is bundled into the frozen build (NetstackTestSuite.spec),
+    so this resolves in both source and packaged modes. An unreadable file
+    yields an empty set — reports then show no markers, which is a cosmetic
+    loss, never a failed run.
+    """
+    try:
+        data = tomllib.loads(
+            (paths.project_root() / "pyproject.toml").read_text(encoding="utf-8")
+        )
+    except (OSError, tomllib.TOMLDecodeError):
+        return frozenset()
+    entries = data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
+    return frozenset(entry.split(":", 1)[0].strip() for entry in entries)
+
+
+KNOWN_MARKERS = _registered_markers()
 
 
 @dataclass
@@ -198,6 +205,37 @@ def new_run_dir() -> tuple[str, Path]:
     return run_id, run_dir
 
 
+def new_run_result(run_id: str, request: RunRequest) -> TestRunResult:
+    """The canonical run header both front ends start from.
+
+    Shared with gui/run_controller.py so a GUI-driven run and a CLI-driven
+    run describe themselves identically in results.json and the reports.
+    """
+    return TestRunResult(
+        run_id=run_id,
+        started_at=datetime.now(timezone.utc),
+        finished_at=None,
+        target_ip=request.config.target_ip,
+        target_stack=request.config.target_stack,
+        host_platform=platform.system(),
+        payload_mode=request.payload_mode.value,
+        role=request.role.value,
+        proxy_leg=request.proxy_leg,
+    )
+
+
+def finalize_run(result: TestRunResult, run_dir: Path, returncode: int | None) -> TestRunResult:
+    """Stamp the outcome and persist results.json — the file
+    reporting/collector.load_run_result() reads back to regenerate a report
+    without re-running the suite."""
+    result.pytest_returncode = returncode
+    result.finished_at = datetime.now(timezone.utc)
+    (run_dir / "results.json").write_text(
+        json.dumps(result.to_dict(), indent=2), encoding="utf-8"
+    )
+    return result
+
+
 def run_tests(
     request: RunRequest,
     on_test_event: TestEventCallback | None = None,
@@ -222,18 +260,7 @@ def stream_run(
     the completed run, which has also been written to results.json.
     """
     run_id, run_dir = new_run_dir()
-
-    result = TestRunResult(
-        run_id=run_id,
-        started_at=datetime.now(timezone.utc),
-        finished_at=None,
-        target_ip=request.config.target_ip,
-        target_stack=request.config.target_stack,
-        host_platform=platform.system(),
-        payload_mode=request.payload_mode.value,
-        role=request.role.value,
-        proxy_leg=request.proxy_leg,
-    )
+    result = new_run_result(run_id, request)
 
     args = build_pytest_args(request, run_dir)
 
@@ -261,10 +288,7 @@ def stream_run(
         report_offset = drain_test_events(report_log, report_offset, result, on_test_event)
         events_offset = drain_packet_events(events_log, events_offset, result, on_packet_event)
 
-    result.pytest_returncode = proc.returncode
-    result.finished_at = datetime.now(timezone.utc)
-    (run_dir / "results.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
-    yield result
+    yield finalize_run(result, run_dir, proc.returncode)
 
 
 # --- Shared file-tailing helpers -------------------------------------------

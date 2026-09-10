@@ -28,6 +28,7 @@ from scapy.packet import Packet
 from scapy.sendrecv import AsyncSniffer
 from scapy.utils import PcapWriter
 
+from src.errors import CaptureError
 from src.packet_engine.pcap import open_pcap
 from src.packet_engine.platform_backend import SocketBackend, get_backend
 
@@ -112,16 +113,42 @@ class PacketRecorder:
 
     def join(self) -> None:
         """Block until a count/timeout-bounded capture finishes on its own."""
-        if self._sniffer is not None:
-            self._sniffer.join()
-        self._close_writer()
+        try:
+            if self._sniffer is not None:
+                self._sniffer.join()
+        except Exception as exc:
+            raise self._capture_error(exc) from exc
+        finally:
+            self._close_writer()
 
     def stop(self) -> int:
-        """Stop an unbounded capture. Returns the number of packets written."""
-        if self._sniffer is not None and self._sniffer.running:
-            self._sniffer.stop()
-        self._close_writer()
+        """Stop an unbounded capture. Returns the number of packets written.
+
+        Scapy sets AsyncSniffer.running *before* it opens the socket, so a
+        capture that never started (bad interface, invalid BPF filter) leaves
+        a dead thread with the exception stored on the sniffer — which
+        `stop()` and `join()` then re-raise. Callers put this in a `finally:`
+        (see cli.main.record), where an escaping exception skips the writer
+        close, suppresses the "wrote N packets" line, and replaces a clean
+        Ctrl+C exit with a raw traceback.
+
+        So the failure is translated into a CaptureError the entry-point
+        boundary can render, and the writer is closed either way.
+        """
+        try:
+            if self._sniffer is not None and self._sniffer.running:
+                self._sniffer.stop()
+        except Exception as exc:
+            raise self._capture_error(exc) from exc
+        finally:
+            self._close_writer()
         return self.packet_count
+
+    def _capture_error(self, exc: Exception) -> CaptureError:
+        return CaptureError(
+            f"Capture on interface {self.iface!r} failed: {exc}. Check the interface "
+            f"name and the BPF filter ({self.bpf_filter!r})."
+        )
 
     def _close_writer(self) -> None:
         if self._writer is not None:

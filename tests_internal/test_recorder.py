@@ -142,3 +142,84 @@ def test_recorder_context_manager_stops_on_exit(patched, tmp_path) -> None:
         patched["sniffer"].prn(_packet())
     assert patched["writer"].closed
     assert not patched["sniffer"].running
+
+
+# --- A sniffer that never started ------------------------------------------
+# Scapy sets AsyncSniffer.running before it opens the socket, so a capture
+# that fails (bad interface, invalid BPF filter) leaves a dead thread with
+# the exception stored on the sniffer, which stop()/join() then re-raise.
+
+
+class _FailedSniffer(_FakeSniffer):
+    """Stands in for a sniffer whose thread died opening the socket."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.running = True  # scapy sets this before the socket is opened
+
+    def stop(self) -> None:
+        raise OSError("No such device exists")
+
+    def join(self) -> None:
+        raise OSError("No such device exists")
+
+
+@pytest.fixture
+def patched_failing(monkeypatch):
+    created = {}
+
+    def make_writer(path, append, sync):
+        writer = _FakeWriter(path, append, sync)
+        created["writer"] = writer
+        return writer
+
+    def make_sniffer(iface, filter, prn, store, count, timeout):
+        sniffer = _FailedSniffer(iface, filter, prn, store, count, timeout)
+        created["sniffer"] = sniffer
+        return sniffer
+
+    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", make_writer)
+    monkeypatch.setattr("src.packet_engine.recorder.AsyncSniffer", make_sniffer)
+    return created
+
+
+def test_a_capture_that_never_started_is_reported_as_a_capture_error(
+    patched_failing, tmp_path
+) -> None:
+    """Raw OSError out of stop() reached the CLI from inside a `finally:`,
+    where it became a traceback with no mention of the interface."""
+    from src.errors import CaptureError, NetstackError
+
+    recorder = PacketRecorder(
+        "nosuchdev0", tmp_path / "c.pcap", bpf_filter="host 10.0.0.5", backend=_StubBackend()
+    )
+    recorder.start()
+
+    with pytest.raises(CaptureError) as caught:
+        recorder.stop()
+
+    assert isinstance(caught.value, NetstackError)  # the CLI boundary renders it
+    assert "nosuchdev0" in str(caught.value)
+    assert "host 10.0.0.5" in str(caught.value)
+
+
+def test_the_writer_is_closed_even_when_stop_fails(patched_failing, tmp_path) -> None:
+    """The old stop() closed the writer after the sniffer call, so a raise
+    leaked it."""
+    recorder = PacketRecorder("nosuchdev0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.start()
+
+    with pytest.raises(Exception):
+        recorder.stop()
+
+    assert patched_failing["writer"].closed
+
+
+def test_the_writer_is_closed_even_when_join_fails(patched_failing, tmp_path) -> None:
+    recorder = PacketRecorder("nosuchdev0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.start(count=10)
+
+    with pytest.raises(Exception):
+        recorder.join()
+
+    assert patched_failing["writer"].closed

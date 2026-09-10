@@ -429,9 +429,15 @@ def record(
                 time.sleep(0.5)
     except KeyboardInterrupt:
         click.echo("\nStopping…")
-    finally:
-        written = recorder.stop()
-        click.echo(f"Wrote {written} packet(s) to {output_path}")
+
+    # Deliberately not in a `finally:`. stop() reports a sniffer that never
+    # started (bad interface, invalid BPF filter) by raising, and an
+    # exception escaping a finally clause would suppress the count line and
+    # replace the Ctrl+C path's clean exit with whatever it carries. The
+    # capture file is already valid on disk either way — PcapWriter flushes
+    # per frame — so there is nothing here that must run on the error path.
+    written = recorder.stop()
+    click.echo(f"Wrote {written} packet(s) to {output_path}")
 
 
 @cli.command("proxy-serve")

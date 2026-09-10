@@ -34,6 +34,11 @@ jobs:
       - name: Install the project (with GUI + dev extras)
         run: pip install -e ".[gui,dev]"
 
+      # Unused imports/names, plus the cyclomatic-complexity ceiling the
+      # complexity audit established (see audits/code-complexity-audit.md).
+      - name: Lint (ruff)
+        run: ruff check .
+
       # Framework self-validation only — no DUT, NIC, or elevated privileges
       # required. The DUT-facing tests under tests/ need real hardware.
       - name: Run framework self-tests

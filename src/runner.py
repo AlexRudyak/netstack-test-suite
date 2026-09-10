@@ -115,38 +115,72 @@ TestEventCallback = Callable[[TestEvent], None]
 PacketEventCallback = Callable[[PacketEvent], None]
 
 
+def _optional_flags(request: RunRequest) -> list[tuple[str, object | None]]:
+    """`--flag=value` pairs, emitted only when the value is not None.
+
+    Declared as data rather than one `if` per flag so that adding a
+    RunRequest field can't silently forget to forward it — a dropped option
+    produces a run that *succeeds* while ignoring the setting, which is the
+    worst failure shape available here.
+
+    The None-vs-falsy rule is uniform: only None means "unset". An empty
+    string is normalized to None (an unset text field, not a value), but a
+    port of 0 IS forwarded — silently substituting a different port than the
+    operator asked for is worse than letting the subprocess reject it.
+    """
+    return [
+        ("--dut-mac", request.config.target_mac or None),
+        # None ⇒ let the subprocess conftest pick one random port for its session.
+        ("--dut-port", request.config.target_port),
+        ("--dut-source-port", request.config.source_port),
+        ("--proxy-mode", request.proxy_mode or None),
+        ("--proxy-leg", request.proxy_leg or None),
+    ]
+
+
+def _topology_flags(request: RunRequest) -> list[tuple[str, object | None]]:
+    """The proxy front/backend addresses — see the call site for when these apply."""
+    return [
+        ("--proxy-host", request.proxy_host or None),
+        ("--proxy-port", request.proxy_port),
+        ("--backend-host", request.backend_host or None),
+        ("--backend-port", request.backend_port),
+    ]
+
+
+def _test_targets(request: RunRequest) -> list[str]:
+    """Positional pytest targets: explicit `targets` if given, else the
+    single module/submodule path (with test_name applied as a -k filter)."""
+    if request.targets:
+        return list(request.targets)
+    parts = ["tests", request.module, request.submodule]
+    return ["/".join(p for p in parts if p)]
+
+
+def _launcher() -> list[str]:
+    """How to invoke pytest, which differs between source and frozen builds.
+
+    Source: `python -m pytest`. Frozen: the exe has no `-m pytest`, so
+    re-invoke the exe with a sentinel that routes to pytest.main() (see
+    src/gui/app.py). The subprocess runs with cwd = project_root (set in
+    stream_run) so the relative test path resolves in both modes.
+
+    A frozen build also loses pytest's entry-point plugin discovery, so the
+    report-log plugin (which the whole progress stream depends on) must be
+    loaded explicitly with `-p`.
+    """
+    if paths.is_frozen():
+        return [sys.executable, paths.PYTEST_SENTINEL, "-p", "pytest_reportlog.plugin"]
+    return [sys.executable, "-m", "pytest"]
+
+
 def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
     """The canonical subprocess argument list — also used directly by
     gui/run_controller.py's QProcess invocation, so CLI and GUI runs are
     byte-for-byte the same command."""
-    # Positional pytest targets: explicit `targets` if given, else the
-    # single module/submodule path (with test_name as a -k filter below).
-    if request.targets:
-        test_targets = list(request.targets)
-    else:
-        parts = ["tests"]
-        if request.module:
-            parts.append(request.module)
-        if request.submodule:
-            parts.append(request.submodule)
-        test_targets = ["/".join(parts)]
-
-    # Source: `python -m pytest`. Frozen: the exe has no `-m pytest`, so
-    # re-invoke the exe with a sentinel that routes to pytest.main() (see
-    # src/gui/app.py). The subprocess runs with cwd = project_root (set in
-    # stream_run) so the relative test path resolves in both modes.
-    #
-    # A frozen build loses pytest's entry-point plugin discovery, so the
-    # report-log plugin (which the whole progress stream depends on) must be
-    # loaded explicitly with `-p`.
-    if paths.is_frozen():
-        launcher = [sys.executable, paths.PYTEST_SENTINEL, "-p", "pytest_reportlog.plugin"]
-    else:
-        launcher = [sys.executable, "-m", "pytest"]
-
     args = [
-        *launcher,
-        *test_targets,
+        *_launcher(),
+        *_test_targets(request),
         f"--report-log={run_dir / 'report_log.jsonl'}",
         f"--target-stack={request.config.target_stack}",
         f"--role={request.role.value}",
@@ -158,43 +192,33 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
         f"--capture-pcap={run_dir / 'capture.pcap'}",
         "-v",
     ]
-    if request.config.target_mac:
-        args.append(f"--dut-mac={request.config.target_mac}")
-    # None ⇒ let the subprocess conftest pick one random port for its session.
-    if request.config.target_port is not None:
-        args.append(f"--dut-port={request.config.target_port}")
-    if request.config.source_port is not None:
-        args.append(f"--dut-source-port={request.config.source_port}")
+    args += [f"{flag}={value}" for flag, value in _optional_flags(request) if value is not None]
+
+    # Two-token pytest flags, not the --flag=value form the table emits.
     if request.test_name:
         args += ["-k", request.test_name]
     if request.markers:
         args += ["-m", " and ".join(request.markers)]
+
     if request.confirm_vuln_tests:
         args.append("--confirm-vuln-tests")
     # The allow-list gates every `vuln`-marked test (src/utils/safety.py),
     # and it lives on the DUTConfig — forward each CIDR to the subprocess or
     # those tests error out with UnauthorizedTargetError despite the operator
     # having authorized the target. conftest's --allowed-targets is append.
-    for cidr in request.config.allowed_targets:
-        args.append(f"--allowed-targets={cidr}")
+    args += [f"--allowed-targets={cidr}" for cidr in request.config.allowed_targets]
     if request.debug:
         args.append(f"--debug-log={run_dir / 'debug.log'}")
-    if request.proxy_mode:
-        args.append(f"--proxy-mode={request.proxy_mode}")
-    if request.proxy_leg:
-        args.append(f"--proxy-leg={request.proxy_leg}")
+
     # The topology addresses are emitted whenever they're set, not only for
     # --proxy-mode: a front-leg run needs --proxy-host/--proxy-port to know
     # what to retarget to, even with no proxy-marked tests selected.
     if request.proxy_mode or request.proxy_leg:
-        if request.proxy_host:
-            args.append(f"--proxy-host={request.proxy_host}")
-        if request.proxy_port:
-            args.append(f"--proxy-port={request.proxy_port}")
-        if request.backend_host:
-            args.append(f"--backend-host={request.backend_host}")
-        if request.backend_port:
-            args.append(f"--backend-port={request.backend_port}")
+        args += [
+            f"{flag}={value}"
+            for flag, value in _topology_flags(request)
+            if value is not None
+        ]
     return args
 
 

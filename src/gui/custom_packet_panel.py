@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from src.custom_packet.builder import CustomPacketSpec
 from src.custom_packet.sender import send_custom_packet
-from src.packet_engine.payloads import PayloadMode, from_file, from_hex, from_text
+from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 
 
 class CustomPacketPanel(QWidget):
@@ -153,13 +153,14 @@ class CustomPacketPanel(QWidget):
         return PayloadMode.RANDOM
 
     def _resolve_custom_payload(self) -> bytes:
-        if self._custom_text.text():
-            return from_text(self._custom_text.text())
-        if self._custom_hex.text():
-            return from_hex(self._custom_hex.text())
-        if self._custom_file_path.text():
-            return from_file(self._custom_file_path.text())
-        raise ValueError("Custom payload mode requires text, hex, or a file.")
+        custom = resolve_custom_source(
+            text=self._custom_text.text(),
+            hex_str=self._custom_hex.text(),
+            file=self._custom_file_path.text(),
+        )
+        if custom is None:
+            raise ValueError("Custom payload mode requires text, hex, or a file.")
+        return custom
 
     def _on_send(self) -> None:
         try:

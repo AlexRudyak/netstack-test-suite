@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from src.cli.options import register_pytest_options, shared_options
+from src.collection_policy import skip_reason
 from src.config import (
     DUTConfig,
     ProxyLeg,
@@ -60,9 +61,10 @@ def effective_role(config: pytest.Config) -> Role:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip tests that don't apply to the selected --role, at collection
-    time (before any fixture — including the privileged network_interface —
-    is set up, which a function-scoped skip fixture can't guarantee).
+    """Skip tests that don't apply to the selected --role or topology, at
+    collection time (before any fixture — including the privileged
+    network_interface — is set up, which a function-scoped skip fixture
+    can't guarantee).
 
     Role is declared per test with the `client` / `server` markers; a test
     with neither defaults to client-only. `internal` tests (tests_internal/)
@@ -70,34 +72,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """
     role = effective_role(config).value
     proxy_mode = config.getoption("--proxy-mode")
-    skip_marker = pytest.mark.skip
     for item in items:
-        if item.get_closest_marker("internal"):
-            continue
-
-        # Proxy tests need a proxy topology (and a second app instance running
-        # `proxy-serve`), so they're opt-in: skipped unless --proxy-mode is set.
-        if item.get_closest_marker("proxy") is not None:
-            if not proxy_mode:
-                item.add_marker(
-                    skip_marker(
-                        reason="proxy: needs --proxy-mode and a backend instance "
-                        "(`netstack-cli proxy-serve`); see docs/proxy_testing.md"
-                    )
-                )
-            continue  # proxy tests are not role-filtered
-
-        has_client = item.get_closest_marker("client") is not None
-        has_server = item.get_closest_marker("server") is not None
-        applicable = {"client"} if not (has_client or has_server) else set()
-        if has_client:
-            applicable.add("client")
-        if has_server:
-            applicable.add("server")
-        if role not in applicable:
-            item.add_marker(
-                skip_marker(reason=f"role: applies to {sorted(applicable)}, running as {role}")
-            )
+        reason = skip_reason(item, role=role, proxy_mode=proxy_mode)
+        if reason:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -228,18 +206,17 @@ def confirm_vuln_tests(pytestconfig: pytest.Config) -> bool:
 
 @pytest.fixture(scope="session")
 def payload_settings(pytestconfig: pytest.Config) -> dict:
-    from src.packet_engine.payloads import from_file, from_hex, from_text
+    from src.packet_engine.payloads import resolve_custom_source
 
     mode = PayloadMode(pytestconfig.getoption("--payload-mode"))
     custom = None
     if mode is PayloadMode.CUSTOM:
-        if pytestconfig.getoption("--payload-text"):
-            custom = from_text(pytestconfig.getoption("--payload-text"))
-        elif pytestconfig.getoption("--payload-hex"):
-            custom = from_hex(pytestconfig.getoption("--payload-hex"))
-        elif pytestconfig.getoption("--payload-file"):
-            custom = from_file(pytestconfig.getoption("--payload-file"))
-        else:
+        custom = resolve_custom_source(
+            text=pytestconfig.getoption("--payload-text"),
+            hex_str=pytestconfig.getoption("--payload-hex"),
+            file=pytestconfig.getoption("--payload-file"),
+        )
+        if custom is None:
             raise pytest.UsageError(
                 "--payload-mode=custom requires one of --payload-text, --payload-hex, --payload-file"
             )

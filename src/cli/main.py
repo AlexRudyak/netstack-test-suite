@@ -29,7 +29,7 @@ from src.config import (
 )
 from src.custom_packet.builder import CustomPacketSpec
 from src.custom_packet.sender import send_custom_packet
-from src.packet_engine.payloads import PayloadMode, from_file, from_hex, from_text
+from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 from src.packet_engine.preflight import run_preflight
 from src.packet_engine.recorder import PacketRecorder, build_host_filter
 from src.proxy.backend import EchoBackend
@@ -61,6 +61,77 @@ SHARED_OPTIONS = shared_options(
 def cli() -> None:
     """Network Stack Test Suite — RFC conformance & vulnerability testing over Ethernet."""
     configure_logging()
+
+
+def _resolve_topology(
+    proxy_leg: str | None,
+    configured_role: str,
+    *,
+    dut_ip: str,
+    dut_port: int | None,
+    proxy_mode: str | None,
+    proxy_host: str | None,
+    proxy_port: int | None,
+    backend_host: str | None,
+) -> tuple[ProxyLeg | None, Role, str, int]:
+    """Leg → role → retarget → validate, echoing what it decided.
+
+    Returns the resolved (leg, role, target ip, target port). Raises
+    click.UsageError when the selected leg's requirements aren't met. The
+    GUI's counterpart is MainWindow._current_dut_config, which applies the
+    same rules from src.config against widget state.
+    """
+    leg = ProxyLeg(proxy_leg) if proxy_leg else None
+    role = resolve_role(leg, Role(configured_role))
+    if leg is not None:
+        click.echo(f"Proxy leg '{leg.value}' selected — running as {role.value}.")
+
+    dut_ip, dut_port = resolve_leg_target(
+        leg,
+        target_ip=dut_ip,
+        target_port=dut_port,
+        proxy_host=proxy_host,
+        proxy_port=proxy_port,
+    )
+    blocked = back_leg_requirement_error(leg, proxy_mode=proxy_mode, backend_host=backend_host)
+    if blocked:
+        raise click.UsageError(blocked)
+
+    # No --dut-port ⇒ pick one random ephemeral port and use it for the run.
+    if dut_port is None:
+        dut_port = random_ephemeral_port()
+        click.echo(f"No --dut-port given — using random destination port {dut_port} for this run.")
+    return leg, role, dut_ip, dut_port
+
+
+def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
+    """Print the run's outcome, write the report, and return the exit code."""
+    if result.errored:
+        # pytest itself failed to run the tests (collection/usage error,
+        # no tests). Don't masquerade as a clean pass — point at the log.
+        click.echo(
+            f"\npytest exited with code {result.pytest_returncode} "
+            f"(collection/usage error or no tests). See {run_dir / 'pytest_output.log'}",
+            err=True,
+        )
+        return result.pytest_returncode or 2
+
+    click.echo(f"\n{result.counts_summary}")
+    if result.total == 0:
+        click.echo(
+            "No tests ran. Check your --module/--submodule/--test selection and "
+            f"the target configuration. Raw output: {run_dir / 'pytest_output.log'}",
+            err=True,
+        )
+
+    if debug:
+        click.echo(f"Debug log: {run_dir / 'debug.log'}")
+    if report == "pdf":
+        click.echo(f"PDF report: {generate_pdf_report(result, run_dir / 'report.pdf')}")
+    elif report == "html":
+        click.echo(f"HTML report: {generate_html_report(result, run_dir / 'report.html')}")
+
+    return 1 if (result.failed or result.errors) else 0
 
 
 @cli.command()
@@ -120,25 +191,16 @@ def run(
       netstack-cli run --module tcp --submodule syn --iface eth0 --dut-ip 10.0.0.5 --target-stack windows
       netstack-cli run --test test_three_way_handshake --iface eth0 --dut-ip 10.0.0.5 --target-stack linux
     """
-    leg = ProxyLeg(proxy_leg) if proxy_leg else None
-    role = resolve_role(leg, Role(role)).value
-    if leg is not None:
-        click.echo(f"Proxy leg '{leg.value}' selected — running as {role}.")
-    dut_ip, dut_port = resolve_leg_target(
-        leg,
-        target_ip=dut_ip,
-        target_port=dut_port,
+    leg, resolved_role, dut_ip, dut_port = _resolve_topology(
+        proxy_leg,
+        role,
+        dut_ip=dut_ip,
+        dut_port=dut_port,
+        proxy_mode=proxy_mode,
         proxy_host=proxy_host,
         proxy_port=proxy_port,
+        backend_host=backend_host,
     )
-    blocked = back_leg_requirement_error(leg, proxy_mode=proxy_mode, backend_host=backend_host)
-    if blocked:
-        raise click.UsageError(blocked)
-
-    # No --dut-port ⇒ pick one random ephemeral port and use it for the run.
-    if dut_port is None:
-        dut_port = random_ephemeral_port()
-        click.echo(f"No --dut-port given — using random destination port {dut_port} for this run.")
 
     config = DUTConfig(
         interface=iface,
@@ -148,7 +210,7 @@ def run(
         target_port=dut_port,
         source_port=dut_source_port,
         allowed_targets=tuple(allowed_targets),
-        role=Role(role),
+        role=resolved_role,
         proxy_leg=leg,
     )
 
@@ -171,7 +233,7 @@ def run(
         payload_size=payload_size,
         confirm_vuln_tests=confirm_vuln_tests,
         debug=debug,
-        role=Role(role),
+        role=resolved_role,
         proxy_mode=proxy_mode,
         proxy_leg=proxy_leg,
         proxy_host=proxy_host,
@@ -186,35 +248,7 @@ def run(
     result = run_tests(request, on_test_event=on_test_event)
 
     run_dir = Path("reports") / result.run_id
-
-    if result.errored:
-        # pytest itself failed to run the tests (collection/usage error,
-        # no tests). Don't masquerade as a clean pass — point at the log.
-        click.echo(
-            f"\npytest exited with code {result.pytest_returncode} "
-            f"(collection/usage error or no tests). See {run_dir / 'pytest_output.log'}",
-            err=True,
-        )
-        sys.exit(result.pytest_returncode or 2)
-
-    click.echo(f"\n{result.counts_summary}")
-    if result.total == 0:
-        click.echo(
-            "No tests ran. Check your --module/--submodule/--test selection and "
-            f"the target configuration. Raw output: {run_dir / 'pytest_output.log'}",
-            err=True,
-        )
-
-    if debug:
-        click.echo(f"Debug log: {run_dir / 'debug.log'}")
-    if report == "pdf":
-        path = generate_pdf_report(result, run_dir / "report.pdf")
-        click.echo(f"PDF report: {path}")
-    elif report == "html":
-        path = generate_html_report(result, run_dir / "report.html")
-        click.echo(f"HTML report: {path}")
-
-    sys.exit(1 if (result.failed or result.errors) else 0)
+    sys.exit(_emit_results(result, run_dir, report=report, debug=debug))
 
 
 @cli.command()
@@ -258,13 +292,8 @@ def send(
     mode = PayloadMode(payload_mode)
     custom = None
     if mode is PayloadMode.CUSTOM:
-        if payload_text is not None:
-            custom = from_text(payload_text)
-        elif payload_hex is not None:
-            custom = from_hex(payload_hex)
-        elif payload_file is not None:
-            custom = from_file(payload_file)
-        else:
+        custom = resolve_custom_source(text=payload_text, hex_str=payload_hex, file=payload_file)
+        if custom is None:
             raise click.UsageError(
                 "--payload-mode=custom requires --payload, --payload-hex, or --payload-file"
             )

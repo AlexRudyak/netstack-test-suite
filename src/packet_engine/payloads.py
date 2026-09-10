@@ -48,6 +48,30 @@ def from_file(path: str | Path) -> bytes:
     return Path(path).read_bytes()
 
 
+def resolve_custom_source(
+    *,
+    text: str | None = None,
+    hex_str: str | None = None,
+    file: str | Path | None = None,
+) -> bytes | None:
+    """Resolve CUSTOM payload bytes from the first source that is set.
+
+    Precedence is text > hex > file, matching every front end (CLI `send`,
+    the pytest `payload_settings` fixture, and the GUI's custom packet
+    panel). Returns None when no source is given, so each caller raises its
+    own idiomatic "custom mode needs a source" error (click.UsageError /
+    pytest.UsageError / ValueError) rather than this module inventing a
+    shared exception type they'd all have to catch and translate.
+    """
+    if text:
+        return from_text(text)
+    if hex_str:
+        return from_hex(hex_str)
+    if file:
+        return from_file(file)
+    return None
+
+
 def resolve_payload(
     mode: PayloadMode,
     size: int = 0,

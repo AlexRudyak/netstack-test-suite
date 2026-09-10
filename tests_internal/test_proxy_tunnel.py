@@ -278,3 +278,50 @@ def test_an_unmapped_connect_status_still_reports_the_code() -> None:
         HttpConnectHandshake().establish(_Socket(), lambda n: next(reads), ("10.0.0.9", 9099))
 
     assert "—" not in str(caught.value), "no hint should be invented for an unmapped status"
+
+
+def test_socks5_auth_failures_report_the_method_the_dut_selected() -> None:
+    """`details` is how the conformance tests read what the DUT reported.
+
+    The CONNECT-reply failures always carried a Socks5Result; the
+    negotiation failures carried nothing, leaving details as None — which is
+    also what a *successful* transparent tunnel leaves it as.
+    """
+    from src.errors import ProxyTunnelError
+    from src.proxy.handshakes import Socks5AuthFailure, Socks5Handshake
+
+    class _Sock:
+        def sendall(self, _data: bytes) -> None:
+            pass
+
+    # 0xFF: "no acceptable methods" (RFC 1928 §3).
+    with pytest.raises(ProxyTunnelError) as caught:
+        Socks5Handshake().establish(_Sock(), lambda n: b"\x05\xff"[:n], ("10.0.0.9", 9099))
+
+    details = caught.value.details
+    assert isinstance(details, Socks5AuthFailure)
+    assert details.method == 0xFF
+    assert details.stage == "method-selection"
+
+
+def test_socks5_userpass_rejection_reports_the_stage() -> None:
+    from src.errors import ProxyTunnelError
+    from src.proxy.handshakes import Socks5AuthFailure, Socks5Handshake
+
+    class _Sock:
+        def sendall(self, _data: bytes) -> None:
+            pass
+
+    # Selects username/password (0x02), then answers the subnegotiation with
+    # a non-zero status: authentication failed (RFC 1929 §2).
+    replies = iter([b"\x05\x02", b"\x01\x01"])
+
+    with pytest.raises(ProxyTunnelError, match="authentication failed") as caught:
+        Socks5Handshake("user", "secret").establish(
+            _Sock(), lambda _n: next(replies), ("10.0.0.9", 9099)
+        )
+
+    details = caught.value.details
+    assert isinstance(details, Socks5AuthFailure)
+    assert details.method == 0x02
+    assert details.stage == "userpass"

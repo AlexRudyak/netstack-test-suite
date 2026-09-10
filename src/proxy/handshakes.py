@@ -27,7 +27,13 @@ from src.proxy.config import ProxyConfig, ProxyMode
 # Re-exported: raised by every handshake here and re-exported again by
 # client.py, which is where callers reach for it. The class lives in
 # src/errors.py so it shares the NetstackError base.
-__all__ = ["ProxyTunnelError", "Socks5Result", "TunnelHandshake", "for_config"]
+__all__ = [
+    "ProxyTunnelError",
+    "Socks5AuthFailure",
+    "Socks5Result",
+    "TunnelHandshake",
+    "for_config",
+]
 
 
 class TunnelHandshake(Protocol):
@@ -90,6 +96,21 @@ class Socks5Result:
     reply: tunnel.Socks5Reply
 
 
+@dataclass(frozen=True)
+class Socks5AuthFailure:
+    """What the DUT reported before the exchange got as far as a reply.
+
+    The CONNECT-reply failures carry a Socks5Result, so `client.details`
+    says what the DUT answered. The negotiation failures carried nothing,
+    which left `details` as None — the same value TransparentHandshake
+    produces on *success* — so an auth refusal could only be read out of the
+    message string. `method` is the RFC 1928 §3 METHOD byte we actually saw.
+    """
+
+    method: int
+    stage: str  # "method-selection" | "userpass"
+
+
 @dataclass
 class Socks5Handshake:
     """RFC 1928 greeting → method selection → CONNECT → reply, with
@@ -123,21 +144,27 @@ class Socks5Handshake:
         method = tunnel.parse_socks5_method_selection(read(2))
         if method == tunnel.AUTH_NO_ACCEPTABLE:
             raise ProxyTunnelError(
-                "SOCKS5 proxy rejected every offered authentication method (0xFF)"
+                "SOCKS5 proxy rejected every offered authentication method (0xFF)",
+                Socks5AuthFailure(method, "method-selection"),
             )
         if method == tunnel.AUTH_USERNAME_PASSWORD:
             if self.username is None or self.password is None:
                 raise ProxyTunnelError(
                     "SOCKS5 proxy selected username/password auth but no "
-                    "credentials were configured"
+                    "credentials were configured",
+                    Socks5AuthFailure(method, "method-selection"),
                 )
             sock.sendall(tunnel.build_socks5_userpass_auth(self.username, self.password))
             if not tunnel.parse_socks5_userpass_result(read(2)):
                 raise ProxyTunnelError(
-                    "SOCKS5 username/password authentication failed (RFC 1929)"
+                    "SOCKS5 username/password authentication failed (RFC 1929)",
+                    Socks5AuthFailure(method, "userpass"),
                 )
         elif method != tunnel.AUTH_NONE:
-            raise ProxyTunnelError(f"SOCKS5 proxy selected unsupported method 0x{method:02x}")
+            raise ProxyTunnelError(
+                f"SOCKS5 proxy selected unsupported method 0x{method:02x}",
+                Socks5AuthFailure(method, "method-selection"),
+            )
         return method
 
 

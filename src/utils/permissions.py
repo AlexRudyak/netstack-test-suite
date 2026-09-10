@@ -7,6 +7,7 @@ CAP_NET_ADMIN granted to the interpreter via setcap.
 """
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import subprocess
@@ -36,6 +37,12 @@ def is_elevated() -> bool:
 
             return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
         except Exception:
+            # Fail closed, but say so. Reported as "not elevated", this
+            # tells an operator who *is* running as Administrator to re-run
+            # as Administrator — with nothing written down to contradict it.
+            logging.getLogger(__name__).exception(
+                "The Windows elevation check failed; assuming not elevated"
+            )
             return False
     if system == "Linux":
         if os.geteuid() == 0:

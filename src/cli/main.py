@@ -85,9 +85,17 @@ class NetstackCLI(click.Group):
 
 
 @click.group(cls=NetstackCLI)
-def cli() -> None:
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="DEBUG-level application logging. Distinct from `run --debug`, which "
+    "writes the per-packet tshark-style trace for a run.",
+)
+def cli(verbose: bool) -> None:
     """Network Stack Test Suite — RFC conformance & vulnerability testing over Ethernet."""
-    configure_logging()
+    configure_logging(logging.DEBUG if verbose else logging.INFO)
 
 
 def _validate_cidrs(ctx, param, value: tuple[str, ...]) -> tuple[str, ...]:

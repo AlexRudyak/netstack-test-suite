@@ -3,6 +3,8 @@ log panel, and report export — plus a Custom Packet tab for ad-hoc sends.
 """
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,6 +47,7 @@ from src.reporting.models import PacketEvent, TestEvent, TestRunResult
 from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest
 from src.target_profiles import list_profiles
+from src.utils.permissions import remediation_message
 
 
 class MainWindow(QMainWindow):
@@ -92,7 +95,13 @@ class MainWindow(QMainWindow):
         form = QFormLayout(box)
 
         self._iface_combo = QComboBox()
-        self._iface_combo.addItems(_list_interface_names())
+        interface_names = _list_interface_names()
+        self._iface_combo.addItems(interface_names)
+        if not interface_names:
+            # Say why the list is empty where the operator is looking, rather
+            # than letting the preflight report a missing field later.
+            self._iface_combo.setPlaceholderText("No interfaces found — see tooltip")
+            self._iface_combo.setToolTip(remediation_message())
         self._target_ip = QLineEdit()
         self._target_mac = QLineEdit()
         self._src_port = QSpinBox()
@@ -418,9 +427,18 @@ def _split_host_port(text: str) -> tuple[str | None, int | None]:
 
 
 def _list_interface_names() -> list[str]:
+    """Working interfaces, or an empty list with the reason recorded.
+
+    An empty combo box here almost always means the packet driver is missing
+    (Npcap on Windows). Discarding the exception made that read to the
+    operator as "you forgot to pick an interface": the config check reports
+    `Missing required configuration: Interface`, which names the field
+    rather than the cause.
+    """
     try:
         from scapy.interfaces import get_working_ifaces
 
         return [iface.name for iface in get_working_ifaces()]
     except Exception:
+        logging.getLogger(__name__).exception("Could not enumerate network interfaces")
         return []

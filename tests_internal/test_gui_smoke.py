@@ -469,3 +469,38 @@ def test_a_failing_export_warns_instead_of_taking_the_window_down(
 
     assert warned, "the operator was not told the export failed"
     assert "Could not write the PDF report" in panel._status_label.text()
+
+
+def test_an_empty_interface_list_explains_itself(qtbot, monkeypatch, tmp_path) -> None:
+    """An empty combo box almost always means the packet driver is missing.
+    Silently empty, that reads as "you forgot to pick an interface" — the
+    preflight then names the field rather than the cause.
+    """
+    import src.gui.main_window as main_window_mod
+    import src.paths as paths_mod
+
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setattr(paths_mod, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(main_window_mod, "_list_interface_names", lambda: [])
+
+    window = main_window_mod.MainWindow()
+    qtbot.addWidget(window)
+
+    assert window._iface_combo.count() == 0
+    assert window._iface_combo.toolTip(), "no explanation offered for the empty list"
+
+
+def test_interface_enumeration_failure_is_logged_not_swallowed(monkeypatch, caplog) -> None:
+    import logging as logging_mod
+
+    import src.gui.main_window as main_window_mod
+
+    def explode():
+        raise OSError("Npcap is not installed")
+
+    monkeypatch.setattr("scapy.interfaces.get_working_ifaces", explode)
+
+    with caplog.at_level(logging_mod.ERROR):
+        assert main_window_mod._list_interface_names() == []
+
+    assert "Could not enumerate network interfaces" in caplog.text

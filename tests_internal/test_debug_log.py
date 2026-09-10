@@ -88,3 +88,60 @@ def test_network_interface_forwards_to_debug_logger(monkeypatch, tmp_path) -> No
     content = (tmp_path / "debug.log").read_text(encoding="utf-8")
     assert "TX" in content
     assert "test=tests/x.py::test_send" in content
+
+
+# --- Logging configuration -------------------------------------------------
+# Distinct from the debug log above: that is the per-packet trace a run
+# writes when asked. This is the application logging both entry points
+# configure, which was INFO-only, console-only, and used by exactly one
+# module.
+
+
+def test_configure_logging_writes_to_a_file_when_asked(tmp_path) -> None:
+    """The GUI's log panel is cleared at the start of every run, so without
+    a file the record of a failed run dies with the next one."""
+    import logging
+
+    from src.utils.logging_config import configure_logging
+
+    log_file = tmp_path / "nested" / "gui.log"
+    configure_logging(log_file=log_file)
+    try:
+        logging.getLogger("netstack.test").error("something went wrong")
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+
+        assert "something went wrong" in log_file.read_text(encoding="utf-8")
+    finally:
+        logging.basicConfig(force=True)
+
+
+def test_configure_logging_survives_an_unwritable_destination(tmp_path) -> None:
+    """An unwritable log path must not stop the app from starting."""
+    import logging
+
+    from src.utils.logging_config import configure_logging
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("", encoding="utf-8")
+    try:
+        configure_logging(log_file=blocker / "sub" / "gui.log")  # must not raise
+        logging.getLogger("netstack.test").info("still logging")
+    finally:
+        logging.basicConfig(force=True)
+
+
+def test_configure_logging_can_raise_the_level_on_a_second_call() -> None:
+    """basicConfig is a no-op once the root logger has handlers, which would
+    make --verbose silently do nothing."""
+    import logging
+
+    from src.utils.logging_config import configure_logging
+
+    try:
+        configure_logging(logging.INFO)
+        configure_logging(logging.DEBUG)
+
+        assert logging.getLogger().level == logging.DEBUG
+    finally:
+        logging.basicConfig(force=True)

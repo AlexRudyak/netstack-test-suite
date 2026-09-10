@@ -27,12 +27,17 @@ def main() -> None:
 
     from PySide6.QtWidgets import QApplication
 
+    from src import paths
     from src.gui.main_window import MainWindow
     from src.utils.logging_config import configure_logging
     from src.utils.permissions import ElevationResult, relaunch_module_as_admin
 
     log = logging.getLogger(__name__)
-    configure_logging()
+    # A file as well as the console: the log panel is cleared at the start of
+    # every run, so without this the record of a failed run is destroyed by
+    # starting the next one. reports_base() is frozen-aware, so a packaged
+    # build writes next to the exe rather than into a temp extraction dir.
+    configure_logging(log_file=paths.reports_base() / "reports" / "gui.log")
 
     # Self-elevate on Windows before opening the window. If an elevated copy
     # is launched, exit so only it runs. If UAC is declined, continue

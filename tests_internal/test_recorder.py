@@ -223,3 +223,36 @@ def test_the_writer_is_closed_even_when_join_fails(patched_failing, tmp_path) ->
         recorder.join()
 
     assert patched_failing["writer"].closed
+
+
+def test_a_failing_sink_does_not_end_the_capture(patched, tmp_path, caplog) -> None:
+    """A sink raising into the sniffer thread used to end the recording in
+    silence: scapy stores the exception and stops, while the CLI keeps
+    printing "Press Ctrl+C to stop." over a dead sniffer.
+    """
+    recorder = PacketRecorder("dummy0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.subscribe(lambda pkt: (_ for _ in ()).throw(RuntimeError("bad sink")))
+    seen: list = []
+    recorder.subscribe(seen.append)
+    recorder.start()
+
+    sniffer = patched["sniffer"]
+    sniffer.prn(_packet())
+    sniffer.prn(_packet())
+
+    assert recorder.packet_count == 2, "frames must still be counted"
+    assert len(patched["writer"].written) == 2, "frames must still reach the pcap"
+    assert len(seen) == 2, "a later sink must still run"
+
+
+def test_a_frame_after_close_is_dropped_not_crashed(patched, tmp_path) -> None:
+    """The old guard was an `assert`, which `python -O` strips — leaving
+    AttributeError on NoneType, on the sniffer thread."""
+    recorder = PacketRecorder("dummy0", tmp_path / "c.pcap", backend=_StubBackend())
+    recorder.start()
+    sniffer = patched["sniffer"]
+    recorder.stop()
+
+    sniffer.prn(_packet())  # a frame in flight when the capture closed
+
+    assert recorder.packet_count == 0

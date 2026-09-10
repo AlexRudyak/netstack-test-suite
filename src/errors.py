@@ -97,6 +97,21 @@ class ProtocolViolation(NetstackError, ValueError):
     """
 
 
+class PeerClosedEarly(ProtocolViolation, ConnectionError):
+    """The DUT closed the connection part-way through a protocol message.
+
+    "The proxy hung up before finishing its SOCKS5 reply" is an observation
+    about the DUT, exactly like a malformed reply is — but it was raised as
+    a builtin ConnectionError, the type the OS uses for a local socket
+    problem, so tests/proxy/ could not claim it as a verdict and
+    ProxyClient could not classify it.
+
+    Subclasses ConnectionError as well, so the handlers that already catch
+    that (the proxy fixtures, ProxyClient.connect's cleanup) keep working
+    unchanged.
+    """
+
+
 class ProxyTunnelError(NetstackError):
     """The DUT refused or mishandled the tunnel-establishment handshake.
 

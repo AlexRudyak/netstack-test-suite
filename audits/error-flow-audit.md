@@ -941,8 +941,14 @@ class PeerClosedEarly(ProtocolViolation, ConnectionError):
 ```
 
 then swap the three `ConnectionError(...)` calls above for
-`PeerClosedEarly(...)`. Leave `client.py:60`'s `ConnectionError` (a genuinely
-local short read) as it is.
+`PeerClosedEarly(...)`.
+
+**Revised while applying.** This first said to leave `client.py:93`'s
+`ConnectionError` alone as "a genuinely local short read". That is wrong:
+`_recv_exact` is the `read` callable the handshakes are driven with, so it
+is where a DUT hanging up mid-reply is *actually* observed — the three sites
+above only catch a reader that returns short data instead of raising. It was
+converted too.
 
 ---
 

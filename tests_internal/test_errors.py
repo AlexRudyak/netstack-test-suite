@@ -130,3 +130,14 @@ def test_known_target_stacks_still_resolve_case_insensitively() -> None:
 
     assert get_profile("LINUX").name == "linux"
     assert get_profile("windows").name == "windows"
+
+
+def test_a_peer_that_hangs_up_is_both_a_violation_and_a_connection_error() -> None:
+    """The dual base is the point: existing handlers catch ConnectionError,
+    while tests/proxy/ can now claim a truncated reply as a DUT verdict
+    rather than something that might equally be a local socket problem."""
+    exc = errors.PeerClosedEarly("proxy closed before the SOCKS5 domain length byte")
+
+    assert isinstance(exc, ConnectionError)  # what the existing handlers catch
+    assert isinstance(exc, errors.ProtocolViolation)  # the DUT said something wrong
+    assert isinstance(exc, errors.NetstackError)

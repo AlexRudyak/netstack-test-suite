@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import socket
 
-from src.errors import ProtocolViolation
+from src.errors import PeerClosedEarly, ProtocolViolation
 from src.proxy import handshakes
 from src.proxy.config import RECV_CHUNK, ProxyConfig
 
@@ -90,7 +90,11 @@ class ProxyClient:
         while len(buffer) < count:
             chunk = self.socket.recv(count - len(buffer))
             if not chunk:
-                raise ConnectionError(
+                # This is the `read` the handshakes are driven with, so it is
+                # where a DUT that hangs up mid-reply is actually observed —
+                # tunnel.py's own short-read guards only catch a reader that
+                # returns short data instead of raising.
+                raise PeerClosedEarly(
                     f"connection closed after {len(buffer)} of {count} expected bytes"
                 )
             buffer += chunk

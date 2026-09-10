@@ -323,7 +323,19 @@ def run(
     def on_test_event(event) -> None:
         click.echo(event.summary_line())
 
-    result = run_tests(request, on_test_event=on_test_event)
+    try:
+        result = run_tests(request, on_test_event=on_test_event)
+    except KeyboardInterrupt:
+        # `record` and `proxy-serve` have always handled this; `run` — the
+        # command that can take an hour — did not, so Ctrl+C ended it on a
+        # traceback. stream_run stops the subprocess and saves what it has,
+        # so there is a run directory to point at.
+        click.echo(
+            "\nInterrupted — the test runner was stopped. Partial results were "
+            "saved under reports/ and can still be reported on.",
+            err=True,
+        )
+        raise SystemExit(130) from None
 
     run_dir = Path("reports") / result.run_id
     sys.exit(_emit_results(result, run_dir, report=report, debug=debug))

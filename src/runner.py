@@ -300,6 +300,10 @@ def stream_run(
 
     Yields the accumulating TestRunResult on each poll; the final yield is
     the completed run, which has also been written to results.json.
+
+    An interrupt — Ctrl+C in the CLI, or a consumer closing this generator —
+    terminates the subprocess and still persists what was collected, so a
+    run stopped part-way is reportable rather than lost.
     """
     run_id, run_dir = new_run_dir()
     result = new_run_result(run_id, request)
@@ -321,17 +325,32 @@ def stream_run(
             args, stdout=out, stderr=subprocess.STDOUT, text=True, cwd=str(paths.project_root())
         )
 
-        while proc.poll() is None:
+        try:
+            while proc.poll() is None:
+                report_offset = drain_test_events(report_log, report_offset, result, on_test_event)
+                events_offset = drain_packet_events(
+                    events_log, events_offset, result, on_packet_event
+                )
+                yield result
+                time.sleep(POLL_INTERVAL_S)
+        except (KeyboardInterrupt, GeneratorExit):
+            # Interrupting the parent must not leave the child running: it is
+            # sending real frames at the DUT, and nothing would be watching it.
+            # (On a terminal Ctrl+C the console signal usually reaches the whole
+            # process group anyway; this covers the cases where it does not.)
+            proc.terminate()
+            proc.wait(timeout=10)
+            raise
+        finally:
+            # Final drain in case data was written between the last poll and
+            # the exit — and then persist, on every path. An interrupted run
+            # used to write no results.json at all, so an hour of testing left
+            # nothing that could be re-reported without touching the DUT again.
             report_offset = drain_test_events(report_log, report_offset, result, on_test_event)
             events_offset = drain_packet_events(events_log, events_offset, result, on_packet_event)
-            yield result
-            time.sleep(POLL_INTERVAL_S)
+            finalize_run(result, run_dir, proc.returncode)
 
-        # Final drain in case data was written between the last poll and exit.
-        report_offset = drain_test_events(report_log, report_offset, result, on_test_event)
-        events_offset = drain_packet_events(events_log, events_offset, result, on_packet_event)
-
-    yield finalize_run(result, run_dir, proc.returncode)
+    yield result
 
 
 # --- Shared file-tailing helpers -------------------------------------------

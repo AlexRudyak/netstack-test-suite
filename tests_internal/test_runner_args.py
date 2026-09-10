@@ -511,3 +511,74 @@ def test_errored_property_reflects_returncode() -> None:
     assert _result(2).errored is True   # usage/collection error
     assert _result(5).errored is True   # no tests collected
     assert _result(None).errored is False
+
+
+# --- Interruption ----------------------------------------------------------
+# An interrupted run used to write no results.json and leave the pytest
+# subprocess running: the parent unwound out of stream_run's poll loop, past
+# the only call to finalize_run, with the child still sending at the DUT.
+
+
+class _NeverExitingProc:
+    """A subprocess stand-in that never finishes on its own."""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        return None
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        return self.returncode
+
+
+def _fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _NeverExitingProc:
+    import subprocess
+
+    from src import paths, runner
+
+    proc = _NeverExitingProc()
+    monkeypatch.setattr(paths, "reports_base", lambda: tmp_path)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+    return proc
+
+
+def _only_run_dir(tmp_path: Path) -> Path:
+    runs = list((tmp_path / "reports").iterdir())
+    assert len(runs) == 1
+    return runs[0]
+
+
+def test_interrupting_a_run_terminates_the_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.runner import stream_run
+
+    proc = _fake_run(monkeypatch, tmp_path)
+    stream = stream_run(RunRequest(config=_config()))
+    next(stream)  # first poll: the run is under way
+    stream.close()  # the consumer went away (Ctrl+C unwinding, or a GUI close)
+
+    assert proc.terminated, "the child was left running against the DUT"
+
+
+def test_interrupting_a_run_still_writes_results_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.run_artifacts import RunArtifacts
+    from src.runner import stream_run
+
+    _fake_run(monkeypatch, tmp_path)
+    stream = stream_run(RunRequest(config=_config()))
+    next(stream)
+    stream.close()
+
+    results = _only_run_dir(tmp_path) / RunArtifacts.RESULTS
+    assert results.exists(), "an interrupted run left nothing that could be re-reported"
+    assert RunArtifacts(results.parent).load().finished_at is not None

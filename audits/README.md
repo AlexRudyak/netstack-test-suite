@@ -13,6 +13,7 @@ wrong and why* survives the change.
 | [Code duplication](code-duplication-audit.md) | `db76783` | applied |
 | [Design patterns](design-patterns-audit.md) | `cbe4af1` | 14 of 16 applied; 2 no-action by design |
 | [Error handling](error-handling-audit.md) | `4653b25` | applied |
+| [Error flow](error-flow-audit.md) | `a3a339e` | reported; not yet applied |
 
 ## Prompt source
 
@@ -29,3 +30,9 @@ the error-handling prompt asks for HTTP status categorisation (400/401/403/
 404/429/500), which this package has no equivalent for — it exposes no
 request/response service — so that audit substitutes the categories this
 codebase actually has and says so explicitly rather than inventing a mapping.
+The error-flow prompt needed the same treatment for a different reason: it
+asks for the paths of a web application (database connection, third-party API,
+authentication), none of which exist here, so that audit opens by mapping each
+one to the component occupying the same structural position — the run-artifact
+store, the DUT's silence, the privilege and vuln-authorization gates — and
+traces those.

@@ -25,6 +25,54 @@ finding is the residue of an applied one, it says so.
 
 ---
 
+## Status: all 16 findings applied
+
+Every finding was applied on branch `development`, in the order this report
+sets them out. Each finding below keeps its original analysis and remediation
+snippet, so the record of *what was wrong and why* survives alongside the fix.
+
+Two findings were **corrected while being applied**, and both corrections are
+recorded in place rather than quietly dropped:
+
+- **F-05** claimed the fix moves a DUT refusal from the ERROR bucket to the
+  FAIL bucket. It does not — pytest files anything raised in a fixture as a
+  setup ERROR whatever its type, verified directly. Rated down 5 → 2.
+- **F-11** said to leave `client._recv_exact`'s `ConnectionError` alone as a
+  local short read. Wrong: that is the `read` the handshakes are driven with,
+  so it is where a DUT hanging up mid-reply is actually observed. Converted too.
+
+Verification after the final change:
+
+- `pytest tests_internal/ -q` -> **316 passed** (291 at `a3a339e`, plus 25
+  new tests covering the paths these findings describe)
+- `python -O -m pytest tests_internal/ -q` -> same 316, which is what F-13 is about
+- `pytest tests/ --collect-only -q` -> 81 tests, no import errors
+- `ruff check .` -> clean
+
+| Finding | Commit | Note |
+|---|---|---|
+| F-01 half-close scored as EOF | `eac1224` | the reproduction became a regression test |
+| F-02 interrupted run | `8ee2aec` | drain+finalize moved into a `finally:` |
+| F-03 artifact write failures | `823ef55` | new `RunArtifactError`; two Qt slots guarded |
+| F-04 Stop reported as an error | `460741b` | the 62097 measurement became a test |
+| F-05 refusal `details` dropped | `c94fe1e` | **rating corrected 5 → 2** |
+| F-06 unknown target stack | `7c0ce51` | |
+| F-07 incomplete proxy topology | `ecb3e93` | also closed the `ProxyMode(None)` gap |
+| F-08 malformed host:port | `36aa48f` | |
+| F-09 silent backend threads | `7ba668e` | + `EchoBackend.is_serving` |
+| F-10 untyped custom-packet errors | `b66d349` | |
+| F-11 truncation as a builtin | `ec18407` | **remediation corrected**, one more site |
+| F-12 SOCKS5 auth `details` | `1a4923c` | new `Socks5AuthFailure` |
+| F-13 `-O`-stripped asserts | `f5f30b2` | `proxy/config.py`'s stays, by design |
+| F-14 bugs blamed on the interface | `c896202` | |
+| F-15 silent log-file drop | `1abe3e7` | the last empty handler in `src/` |
+| F-16 six error formats | `705055b` | `NetstackError.render()` |
+
+The audit itself was committed first, at `a791112`, so the analysis is in the
+history before any of the code it describes changed.
+
+---
+
 ## Scope note: what the prompt's five paths mean here
 
 This package has no database, no third-party HTTP API and no user accounts. It

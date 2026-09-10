@@ -13,7 +13,7 @@ wrong and why* survives the change.
 | [Code duplication](code-duplication-audit.md) | `db76783` | applied |
 | [Design patterns](design-patterns-audit.md) | `cbe4af1` | 14 of 16 applied; 2 no-action by design |
 | [Error handling](error-handling-audit.md) | `4653b25` | applied |
-| [Error flow](error-flow-audit.md) | `a3a339e` | reported; not yet applied |
+| [Error flow](error-flow-audit.md) | `a3a339e` | applied; 2 findings corrected while applying |
 
 ## Prompt source
 

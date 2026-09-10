@@ -32,7 +32,12 @@ class PacketEventLogWriter:
 
 
 def load_run_result(run_dir: Path) -> TestRunResult:
-    """Re-open a past run's results.json — used to regenerate a PDF/HTML
-    report without re-running the suite against the DUT."""
-    data = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
-    return TestRunResult.from_dict(data)
+    """Re-open a past run — used to regenerate a PDF/HTML report without
+    re-running the suite against the DUT.
+
+    A thin alias for RunArtifacts.load(), which is also what wrote the file
+    (via runner.finalize_run), so the two sides cannot name it differently.
+    """
+    from src.run_artifacts import RunArtifacts
+
+    return RunArtifacts(run_dir).load()

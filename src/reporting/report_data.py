@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from src import catalog
 from src.catalog import TestSpec
 from src.reporting.models import TestEvent, TestOutcome, TestRunResult
+from src.run_artifacts import RunArtifacts
 
 # Titles for the RFCs the suite references — the developer's reading list.
 RFC_TITLES: dict[str, str] = {
@@ -61,13 +62,10 @@ RFC_INTRO = (
     "Specifications exercised by this suite — the reading list for interpreting the findings."
 )
 
-# (filename, what it holds) for the artifacts section.
-ARTIFACTS: tuple[tuple[str, str], ...] = (
-    ("capture.pcap", "every frame the suite sent and received."),
-    ("debug.log", "tshark-style per-packet trace (present only if Debug mode was on)."),
-    ("pytest_output.log", "raw test-runner output."),
-    ("results.json", "this run in machine-readable form."),
-)
+# (filename, what it holds) for the artifacts section — from the module
+# that owns the run directory's layout, so the list a report shows its
+# reader is generated from the names the runner actually writes.
+ARTIFACTS = RunArtifacts.DESCRIPTIONS
 
 
 def findings_intro(count: int) -> str:

@@ -42,6 +42,7 @@ from src.proxy.config import ProxyMode
 from src.plotting.metrics import MetricsBuffer
 from src.plotting.realtime_plotter import RealtimePlotWidget
 from src.reporting.models import PacketEvent, TestEvent, TestRunResult
+from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest
 from src.target_profiles import list_profiles
 
@@ -361,7 +362,8 @@ class MainWindow(QMainWindow):
         if result.errored:
             self._log_panel.append_line(
                 f"pytest exited with code {result.pytest_returncode} "
-                f"(collection/usage error or no tests) — see reports/{result.run_id}/pytest_output.log"
+                f"(collection/usage error or no tests) — see "
+                f"reports/{result.run_id}/{RunArtifacts.PYTEST_OUTPUT}"
             )
         elif result.total == 0:
             self._log_panel.append_line(

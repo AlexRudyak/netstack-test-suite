@@ -44,6 +44,7 @@ from src.reporting.models import (
     TestOutcome,
     TestRunResult,
 )
+from src.run_artifacts import RunArtifacts
 
 POLL_INTERVAL_S = 0.2
 
@@ -193,18 +194,19 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
     """The canonical subprocess argument list — also used directly by
     gui/run_controller.py's QProcess invocation, so CLI and GUI runs are
     byte-for-byte the same command."""
+    artifacts = RunArtifacts(run_dir)
     args = [
         *_launcher(),
         *_test_targets(request),
-        f"--report-log={run_dir / 'report_log.jsonl'}",
+        f"--report-log={artifacts.report_log}",
         f"--target-stack={request.config.target_stack}",
         f"--role={request.role.value}",
         f"--dut-ip={request.config.target_ip}",
         f"--dut-iface={request.config.interface}",
         f"--payload-mode={request.payload_mode.value}",
         f"--payload-size={request.payload_size}",
-        f"--live-events-log={run_dir / 'packet_events.jsonl'}",
-        f"--capture-pcap={run_dir / 'capture.pcap'}",
+        f"--live-events-log={artifacts.packet_events}",
+        f"--capture-pcap={artifacts.capture}",
         "-v",
     ]
     args += [f"{flag}={value}" for flag, value in _optional_flags(request) if value is not None]
@@ -223,7 +225,7 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
     # having authorized the target. conftest's --allowed-targets is append.
     args += [f"--allowed-targets={cidr}" for cidr in request.config.allowed_targets]
     if request.debug:
-        args.append(f"--debug-log={run_dir / 'debug.log'}")
+        args.append(f"--debug-log={artifacts.debug_log}")
 
     # The topology addresses are emitted whenever they're set, not only for
     # --proxy-mode: a front-leg run needs --proxy-host/--proxy-port to know
@@ -264,14 +266,12 @@ def new_run_result(run_id: str, request: RunRequest) -> TestRunResult:
 
 
 def finalize_run(result: TestRunResult, run_dir: Path, returncode: int | None) -> TestRunResult:
-    """Stamp the outcome and persist results.json — the file
+    """Stamp the outcome and persist the run — the file
     reporting/collector.load_run_result() reads back to regenerate a report
-    without re-running the suite."""
+    without re-running the suite. Both sides go through RunArtifacts."""
     result.pytest_returncode = returncode
     result.finished_at = datetime.now(timezone.utc)
-    (run_dir / "results.json").write_text(
-        json.dumps(result.to_dict(), indent=2), encoding="utf-8"
-    )
+    RunArtifacts(run_dir).save(result)
     return result
 
 
@@ -303,8 +303,9 @@ def stream_run(
 
     args = build_pytest_args(request, run_dir)
 
-    report_log = run_dir / "report_log.jsonl"
-    events_log = run_dir / "packet_events.jsonl"
+    artifacts = RunArtifacts(run_dir)
+    report_log = artifacts.report_log
+    events_log = artifacts.packet_events
     report_offset = events_offset = 0
 
     # Redirect the subprocess's stdout/stderr to a file rather than an
@@ -312,7 +313,7 @@ def stream_run(
     # undrained PIPE would fill its OS buffer under -v output and deadlock
     # pytest (it blocks on write while we block on poll). The file keeps the
     # raw output available for debugging without that risk.
-    with (run_dir / "pytest_output.log").open("w", encoding="utf-8") as out:
+    with artifacts.pytest_output.open("w", encoding="utf-8") as out:
         proc = subprocess.Popen(
             args, stdout=out, stderr=subprocess.STDOUT, text=True, cwd=str(paths.project_root())
         )

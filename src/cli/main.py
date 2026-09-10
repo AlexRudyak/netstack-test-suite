@@ -36,6 +36,7 @@ from src.proxy.backend import EchoBackend
 from src.proxy.config import DEFAULT_BACKEND_PORT, ProxyMode
 from src.reporting.html_report import generate_html_report
 from src.reporting.pdf_report import generate_pdf_report
+from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest, run_tests
 from src.target_profiles import list_profiles
 from src.utils.logging_config import configure_logging
@@ -106,12 +107,13 @@ def _resolve_topology(
 
 def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
     """Print the run's outcome, write the report, and return the exit code."""
+    artifacts = RunArtifacts(run_dir)
     if result.errored:
         # pytest itself failed to run the tests (collection/usage error,
         # no tests). Don't masquerade as a clean pass — point at the log.
         click.echo(
             f"\npytest exited with code {result.pytest_returncode} "
-            f"(collection/usage error or no tests). See {run_dir / 'pytest_output.log'}",
+            f"(collection/usage error or no tests). See {artifacts.pytest_output}",
             err=True,
         )
         return result.pytest_returncode or 2
@@ -120,16 +122,16 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
     if result.total == 0:
         click.echo(
             "No tests ran. Check your --module/--submodule/--test selection and "
-            f"the target configuration. Raw output: {run_dir / 'pytest_output.log'}",
+            f"the target configuration. Raw output: {artifacts.pytest_output}",
             err=True,
         )
 
     if debug:
-        click.echo(f"Debug log: {run_dir / 'debug.log'}")
+        click.echo(f"Debug log: {artifacts.debug_log}")
     if report == "pdf":
-        click.echo(f"PDF report: {generate_pdf_report(result, run_dir / 'report.pdf')}")
+        click.echo(f"PDF report: {generate_pdf_report(result, artifacts.report('pdf'))}")
     elif report == "html":
-        click.echo(f"HTML report: {generate_html_report(result, run_dir / 'report.html')}")
+        click.echo(f"HTML report: {generate_html_report(result, artifacts.report('html'))}")
 
     return 1 if (result.failed or result.errors) else 0
 

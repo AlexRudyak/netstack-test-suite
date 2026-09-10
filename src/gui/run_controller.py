@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from src import paths
 from src.reporting.models import TestRunResult
+from src.run_artifacts import RunArtifacts
 from src.runner import (
     RunRequest,
     build_pytest_args,
@@ -77,14 +78,15 @@ class RunController(QObject):
 
     def _drain(self) -> None:
         assert self._run_dir is not None and self._result is not None
+        artifacts = RunArtifacts(self._run_dir)
         self._report_offset = drain_test_events(
-            self._run_dir / "report_log.jsonl",
+            artifacts.report_log,
             self._report_offset,
             self._result,
             lambda event: self.test_event.emit(event),
         )
         self._events_offset = drain_packet_events(
-            self._run_dir / "packet_events.jsonl",
+            artifacts.packet_events,
             self._events_offset,
             self._result,
             lambda event: self.packet_event.emit(event),

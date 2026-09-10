@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QVB
 from src.reporting.html_report import generate_html_report
 from src.reporting.models import TestRunResult
 from src.reporting.pdf_report import generate_pdf_report
+from src.run_artifacts import RunArtifacts
 from src.runner import reports_dir
 
 
@@ -53,7 +54,7 @@ class ReportPanel(QWidget):
         """
         if self._result is None:
             return
-        default_path = reports_dir() / self._result.run_id / f"report.{suffix}"
+        default_path = RunArtifacts(reports_dir() / self._result.run_id).report(suffix)
         path_str, _ = QFileDialog.getSaveFileName(
             self, f"Export {label} report", str(default_path), f"{label} files (*.{suffix})"
         )

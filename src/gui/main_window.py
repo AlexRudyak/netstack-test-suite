@@ -63,6 +63,9 @@ class MainWindow(QMainWindow):
         # Set when the runner process failed to launch, so the generic
         # "no tests ran" line doesn't follow the specific reason.
         self._launch_failed = False
+        # Set when the operator pressed Stop, so a partial run is reported as
+        # stopped rather than as "no tests ran".
+        self._stopped = False
         self._controller = RunController(self)
         self._controller.test_event.connect(self._on_test_event)
         self._controller.packet_event.connect(self._on_packet_event)
@@ -70,6 +73,7 @@ class MainWindow(QMainWindow):
         self._controller.finished.connect(self._on_finished)
         self._controller.failed.connect(self._on_launch_failed)
         self._controller.save_failed.connect(self._on_save_failed)
+        self._controller.stopped.connect(self._on_stopped)
 
         self._build_ui()
 
@@ -261,6 +265,7 @@ class MainWindow(QMainWindow):
         self._plot.reset()
         self._log_panel.clear_log()
         self._launch_failed = False
+        self._stopped = False
         # Surface progress/errors as text — the Log tab is where the run
         # actually reports what happened (a blank Live plot was exactly why
         # a failed run looked like "nothing happened").
@@ -392,11 +397,20 @@ class MainWindow(QMainWindow):
             "if you need to keep them."
         )
 
+    def _on_stopped(self) -> None:
+        """The run ended because it was killed, not because pytest chose to."""
+        self._stopped = True
+
     def _on_finished(self, result: TestRunResult) -> None:
         self._report_panel.set_result(result)
         if self._launch_failed:
             return  # _on_launch_failed already said what went wrong
-        if result.errored:
+        if self._stopped:
+            self._log_panel.append_line(
+                f"Run stopped — {result.counts_summary} before the stop. "
+                "The tests that did not run are not failures."
+            )
+        elif result.errored:
             self._log_panel.append_line(
                 f"pytest exited with code {result.pytest_returncode} "
                 f"(collection/usage error or no tests) — see "

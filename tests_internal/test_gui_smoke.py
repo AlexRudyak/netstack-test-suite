@@ -568,3 +568,51 @@ def test_a_results_write_failure_still_delivers_the_run(qtbot, tmp_path, monkeyp
 
     assert blocker.args[0] is not None, "the completed run was not delivered"
     assert reported and "no space left" in reported[0]
+
+
+def _idle_controller(tmp_path, run_id: str):
+    """A RunController holding a started run, with no live QProcess."""
+    from src.config import DUTConfig
+    from src.gui.run_controller import RunController
+    from src.runner import RunRequest, new_run_result
+
+    controller = RunController()
+    controller._run_dir = tmp_path
+    controller._result = new_run_result(
+        run_id,
+        RunRequest(config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")),
+    )
+    return controller
+
+
+def test_a_stopped_run_is_not_reported_as_a_collection_error(qtbot, tmp_path) -> None:
+    """QProcess.kill() reports the OS crash code (62097 on Windows), and
+    `errored` is `pytest_returncode >= 2` — so pressing Stop was recorded,
+    in the log and in results.json, as "pytest exited with code 62097
+    (collection/usage error or no tests)"."""
+    from PySide6.QtCore import QProcess
+
+    controller = _idle_controller(tmp_path, "run-stopped")
+    controller._stopping = True
+
+    with qtbot.waitSignal(controller.finished, timeout=5000) as blocker:
+        controller._on_finished(62097, QProcess.ExitStatus.CrashExit)
+
+    result = blocker.args[0]
+    assert result.pytest_returncode is None
+    assert not result.errored, "the operator's own Stop was reported as a suite malfunction"
+
+
+def test_a_real_pytest_exit_code_is_still_recorded(qtbot, tmp_path) -> None:
+    """The fix must not swallow the codes pytest actually chooses: 2 is a
+    genuine collection/usage error and has to stay visible."""
+    from PySide6.QtCore import QProcess
+
+    controller = _idle_controller(tmp_path, "run-errored")
+
+    with qtbot.waitSignal(controller.finished, timeout=5000) as blocker:
+        controller._on_finished(2, QProcess.ExitStatus.NormalExit)
+
+    result = blocker.args[0]
+    assert result.pytest_returncode == 2
+    assert result.errored

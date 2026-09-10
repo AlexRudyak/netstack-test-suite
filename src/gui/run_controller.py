@@ -36,6 +36,7 @@ class RunController(QObject):
     finished = Signal(object)  # emits the completed TestRunResult
     failed = Signal(str)  # emits why the runner could not be started
     save_failed = Signal(str)  # emits why a completed run could not be saved
+    stopped = Signal()  # emitted when the run ended because it was killed
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -47,6 +48,9 @@ class RunController(QObject):
         self._run_dir: Path | None = None
         self._report_offset = 0
         self._events_offset = 0
+        # Set by stop() so _on_finished can tell the operator's own Stop from
+        # a return code pytest actually chose.
+        self._stopping = False
 
     def start(self, request: RunRequest) -> None:
         try:
@@ -60,6 +64,7 @@ class RunController(QObject):
         self._run_dir = run_dir
         self._report_offset = 0
         self._events_offset = 0
+        self._stopping = False
         self._result = new_run_result(run_id, request)
 
         args = build_pytest_args(request, run_dir)
@@ -79,6 +84,7 @@ class RunController(QObject):
 
     def stop(self) -> None:
         if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
+            self._stopping = True
             self._process.kill()
         else:
             # Nothing is running to deliver `finished`, so the poll timer
@@ -140,9 +146,26 @@ class RunController(QObject):
         )
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        """Record what pytest decided — and nothing else.
+
+        A killed process reports the OS's crash code (62097 on Windows) with
+        CrashExit, and `TestRunResult.errored` is `pytest_returncode >= 2`.
+        So pressing Stop used to be reported, in the Log tab and in every
+        report regenerated from results.json afterwards, as "pytest exited
+        with code 62097 (collection/usage error or no tests)" — the
+        operator's own action read back to them as a suite malfunction, with
+        the results collected before the stop labelled untrustworthy.
+
+        None is already the documented "no code to report" value, and makes
+        `errored` False, so a stopped run presents as what it is: partial.
+        """
         self._timer.stop()
         self._drain()
-        self.finished.emit(self._finalize(exit_code))
+        stopped = self._stopping or exit_status is QProcess.ExitStatus.CrashExit
+        self._stopping = False
+        if stopped:
+            self.stopped.emit()
+        self.finished.emit(self._finalize(None if stopped else exit_code))
 
     def _finalize(self, returncode: int | None) -> TestRunResult:
         """Persist the run, reporting a write failure rather than raising it.

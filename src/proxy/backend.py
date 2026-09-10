@@ -17,12 +17,15 @@ a conformant proxy propagates the shutdown to the other leg (RFC 9293 §3.6).
 """
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from src.proxy.config import DEFAULT_BACKEND_PORT, RECV_CHUNK
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,6 +87,15 @@ class EchoBackend:
                 udp_bytes_received=self._stats.udp_bytes_received,
                 peers=list(self._stats.peers),
             )
+
+    @property
+    def is_serving(self) -> bool:
+        """Whether this backend is actually still accepting.
+
+        The GUI panel showed "Listening on …" for as long as it held a
+        reference, which stayed true after the accept thread had died.
+        """
+        return self._tcp_socket is not None and any(t.is_alive() for t in self._threads)
 
     @property
     def bound_port(self) -> int:
@@ -160,6 +172,19 @@ class EchoBackend:
 
     # --- serving -----------------------------------------------------------
 
+    def _report_loop_exit(self, what: str, exc: OSError) -> None:
+        """Say why a serving thread ended, unless we ended it ourselves.
+
+        Every loop here breaks on an OSError, and stop() causes one on
+        purpose by closing the socket. Treating the two the same made a real
+        failure indistinguishable from a clean shutdown — and this backend's
+        whole job is to be observable from the other instance.
+        """
+        if self._stop.is_set():
+            return
+        self._emit(f"{what} stopped unexpectedly: {exc}")
+        log.exception("EchoBackend %s failed", what)
+
     def _accept_loop(self) -> None:
         while not self._stop.is_set():
             sock = self._tcp_socket
@@ -169,8 +194,16 @@ class EchoBackend:
                 conn, peer = sock.accept()
             except socket.timeout:
                 continue
-            except OSError:
-                return  # socket closed by stop()
+            except OSError as exc:
+                # stop() closes the socket to break this loop, so a closed
+                # socket is the expected end. Anything else — the interface
+                # going away, a descriptor limit — used to end the thread
+                # just as quietly: the panel went on saying "Listening", the
+                # counters froze, and every test on the *other* instance
+                # failed with an origin timeout whose cause was here and
+                # written down nowhere.
+                self._report_loop_exit("TCP accept loop", exc)
+                return
             with self._lock:
                 self._stats.tcp_connections += 1
                 self._stats.peers.append(f"{peer[0]}:{peer[1]}")
@@ -185,7 +218,8 @@ class EchoBackend:
                     data = conn.recv(RECV_CHUNK)
                 except socket.timeout:
                     continue
-                except OSError:
+                except OSError as exc:
+                    self._report_loop_exit("TCP connection", exc)
                     return
                 if not data:
                     # Peer half-closed: mirror the shutdown so a conformant
@@ -199,7 +233,11 @@ class EchoBackend:
                     self._stats.tcp_bytes_received += len(data)
                 try:
                     conn.sendall(data)
-                except OSError:
+                except OSError as exc:
+                    # tcp_bytes_echoed is the number that proves the DUT's
+                    # client leg relayed our bytes, so an echo that failed
+                    # must not just leave it short in silence.
+                    self._report_loop_exit("TCP echo", exc)
                     return
                 with self._lock:
                     self._stats.tcp_bytes_echoed += len(data)
@@ -213,12 +251,14 @@ class EchoBackend:
                 data, peer = sock.recvfrom(RECV_CHUNK)
             except socket.timeout:
                 continue
-            except OSError:
+            except OSError as exc:
+                self._report_loop_exit("UDP receive loop", exc)
                 return
             with self._lock:
                 self._stats.udp_datagrams += 1
                 self._stats.udp_bytes_received += len(data)
             try:
                 sock.sendto(data, peer)
-            except OSError:
+            except OSError as exc:
+                self._report_loop_exit("UDP echo", exc)
                 return

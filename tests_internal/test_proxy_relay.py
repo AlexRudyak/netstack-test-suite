@@ -473,3 +473,45 @@ def test_a_backend_can_be_restarted_after_stop() -> None:
         backend.stop()
 
     assert first_port  # the first bind really did happen
+
+
+def test_a_serving_thread_that_dies_unexpectedly_says_so(caplog) -> None:
+    """stop() breaks the loops by closing the socket, so every loop ends on
+    an OSError. Treating an unexpected one the same way ended the thread in
+    silence: the panel kept saying "Listening", the counters froze, and the
+    other instance saw only origin timeouts."""
+    events: list[str] = []
+    backend = EchoBackend(LOOPBACK, 0, on_event=events.append)
+    backend.start()
+    try:
+        with caplog.at_level("ERROR"):
+            backend._report_loop_exit("TCP accept loop", OSError("interface went away"))
+    finally:
+        backend.stop()
+
+    assert any("stopped unexpectedly" in line for line in events)
+    assert any("interface went away" in line for line in events)
+    assert "EchoBackend TCP accept loop failed" in caplog.text
+
+
+def test_a_clean_shutdown_is_not_reported_as_a_failure() -> None:
+    """stop() closes the socket on purpose; that OSError is the expected end."""
+    events: list[str] = []
+    backend = EchoBackend(LOOPBACK, 0, on_event=events.append)
+    backend.start()
+    backend.stop()
+
+    backend._report_loop_exit("TCP accept loop", OSError("socket closed by stop()"))
+
+    assert not any("stopped unexpectedly" in line for line in events)
+
+
+def test_is_serving_tracks_the_threads_not_just_the_reference() -> None:
+    backend = EchoBackend(LOOPBACK, 0)
+    assert not backend.is_serving
+    backend.start()
+    try:
+        assert backend.is_serving
+    finally:
+        backend.stop()
+    assert not backend.is_serving

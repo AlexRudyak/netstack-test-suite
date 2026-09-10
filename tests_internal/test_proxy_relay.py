@@ -257,6 +257,59 @@ def test_http_connect_refusal_raises_with_status(backend) -> None:
             ProxyClient(_config(backend, ProxyMode.HTTP_CONNECT, proxy.port)).connect()
 
 
+@pytest.mark.parametrize(
+    ("mode", "match"),
+    [(ProxyMode.SOCKS5, "connection refused"), (ProxyMode.HTTP_CONNECT, "403")],
+)
+def test_a_refused_tunnel_releases_the_socket(backend, mode, match) -> None:
+    """A refusal is the expected outcome for the conformance tests, and
+    TrafficInducer reconnects every 250ms for a whole session — so a socket
+    leaked per refusal exhausted the fd limit on exactly the runs that have
+    to work. `connect()` IS `__enter__`, so a raise there means `__exit__`
+    never runs and connect() itself has to close.
+    """
+    with StubProxy(mode, fail=True) as proxy:
+        client = ProxyClient(_config(backend, mode, proxy.port))
+        with pytest.raises(ProxyTunnelError, match=match):
+            client.connect()
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            client.socket  # noqa: B018 - the property is the assertion
+
+
+def test_a_refused_tunnel_still_records_what_the_dut_reported(backend) -> None:
+    """Closing the socket must not cost the details the refusal-conformance
+    assertions read."""
+    with StubProxy(ProxyMode.HTTP_CONNECT, fail=True) as proxy:
+        client = ProxyClient(_config(backend, ProxyMode.HTTP_CONNECT, proxy.port))
+        with pytest.raises(ProxyTunnelError):
+            client.connect()
+
+        assert client.details is not None
+        assert client.details.status == 403
+
+
+def test_a_non_tunnel_error_also_releases_the_socket(backend, monkeypatch) -> None:
+    """The old handler caught only ProxyTunnelError, so a ConnectionError or
+    a protocol ValueError from tunnel.py leaked the socket identically."""
+    from src.proxy import handshakes
+
+    class _Exploding:
+        def establish(self, sock, read, origin):
+            raise ConnectionError("proxy closed mid-handshake")
+
+    monkeypatch.setattr(handshakes, "for_config", lambda cfg: _Exploding())
+
+    with StubProxy(ProxyMode.SOCKS5) as proxy:
+        client = ProxyClient(_config(backend, ProxyMode.SOCKS5, proxy.port))
+        with pytest.raises(ConnectionError):
+            client.connect()
+
+        assert client.details is None
+        with pytest.raises(RuntimeError, match="not connected"):
+            client.socket  # noqa: B018 - the property is the assertion
+
+
 def test_explicit_mode_requires_a_front_address(backend) -> None:
     with pytest.raises(ValueError, match="explicit proxy mode"):
         ProxyConfig(mode=ProxyMode.SOCKS5, backend_host=LOOPBACK, backend_port=1)

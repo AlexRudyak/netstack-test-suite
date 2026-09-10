@@ -47,8 +47,19 @@ class ProxyClient:
             self.details = handshake.establish(
                 self._sock, self._recv_exact, self.config.origin
             )
-        except ProxyTunnelError as exc:
-            self.details = exc.details
+        except BaseException as exc:
+            # `connect()` IS `__enter__`, so raising here means `__exit__`
+            # never runs and this is the only place the socket can be
+            # released. A refused tunnel is the *expected* outcome for the
+            # refusal-conformance tests, and TrafficInducer reconnects every
+            # 250ms for a whole session — so leaking one socket per refusal
+            # exhausted the fd limit on exactly the runs that need to work.
+            #
+            # Catching BaseException, not ProxyTunnelError: a ConnectionError
+            # or a protocol ValueError from tunnel.py leaks the same socket,
+            # and so does a KeyboardInterrupt mid-handshake.
+            self.details = getattr(exc, "details", None)
+            self.close()
             raise
         return self
 

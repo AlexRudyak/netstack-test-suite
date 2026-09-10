@@ -48,24 +48,9 @@ class TestOutcome(Enum):
     ERROR = "error"
 
 
-# How each outcome is presented, in one table. Every renderer reads its own
-# column here rather than re-typing the palette: the HTML report's CSS class
-# and hex values, the PDF's text/background colours, the matplotlib bar
-# colour, and the GUI log panel's short label.
-OUTCOME_STYLE: dict[TestOutcome, dict[str, str]] = {
-    TestOutcome.PASSED: {
-        "css": "passed", "fg": "#1a7f37", "bg": "#e8f5e9", "mpl": "tab:green", "prefix": "PASS",
-    },
-    TestOutcome.FAILED: {
-        "css": "failed", "fg": "#b71c1c", "bg": "#ffebee", "mpl": "tab:red", "prefix": "FAIL",
-    },
-    TestOutcome.ERROR: {
-        "css": "error", "fg": "#8a1a9b", "bg": "#f3e5f5", "mpl": "tab:purple", "prefix": "ERR",
-    },
-    TestOutcome.SKIPPED: {
-        "css": "skipped", "fg": "#616161", "bg": "#f5f5f5", "mpl": "tab:gray", "prefix": "SKIP",
-    },
-}
+# How each outcome is *presented* lives in reporting/palette.py, not here:
+# this module is imported by the runner, the collector, the packet
+# interface and every GUI panel, none of which render a report.
 
 
 @dataclass

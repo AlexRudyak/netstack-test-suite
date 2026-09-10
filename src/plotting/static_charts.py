@@ -16,7 +16,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from src.plotting.metrics import MetricsBuffer  # noqa: E402
-from src.reporting.models import OUTCOME_STYLE, TestOutcome, TestRunResult  # noqa: E402
+from src.reporting.models import TestOutcome, TestRunResult  # noqa: E402
+from src.reporting.palette import OUTCOME_STYLE  # noqa: E402
 
 CHART_DPI = 150
 

@@ -29,6 +29,7 @@ from src.config import (
 )
 from src.custom_packet.builder import CustomPacketSpec, Proto
 from src.custom_packet.sender import send_custom_packet
+from src.errors import NetstackError
 from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 from src.packet_engine.preflight import run_preflight
 from src.packet_engine.recorder import PacketRecorder, build_host_filter
@@ -57,7 +58,29 @@ SHARED_OPTIONS = shared_options(
 )
 
 
-@click.group()
+class NetstackCLI(click.Group):
+    """Renders a deliberate failure as a message; a bug keeps its traceback.
+
+    Without this every operational error — an unparseable --payload-hex, an
+    unreadable --payload-file, a bad interface name reaching Scapy — reached
+    the operator as a raw Python traceback naming neither the flag at fault
+    nor what to do about it.
+
+    The catch is deliberately narrow. `NetstackError` means this package
+    decided the run cannot proceed and knows why; anything else escaping to
+    here is a bug, and hiding a bug's traceback behind a tidy one-line
+    message would cost more than it saves.
+    """
+
+    def invoke(self, ctx: click.Context) -> object:
+        try:
+            return super().invoke(ctx)
+        except NetstackError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            raise SystemExit(exc.exit_code) from None
+
+
+@click.group(cls=NetstackCLI)
 def cli() -> None:
     """Network Stack Test Suite — RFC conformance & vulnerability testing over Ethernet."""
     configure_logging()

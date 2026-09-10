@@ -49,9 +49,36 @@ def main() -> None:
         )
 
     app = QApplication(sys.argv)
+    _install_excepthook(log)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+
+def _install_excepthook(log: logging.Logger) -> None:
+    """Turn an exception escaping a Qt slot into a logged dialog.
+
+    PySide6 hands an unhandled exception raised inside a slot invoked from
+    C++ to `sys.excepthook` and then terminates the process — so without
+    this, a bug in any handler closes the window with nothing written down
+    and nothing shown to the operator.
+
+    This is the GUI's counterpart to `cli.main.NetstackCLI.invoke`, and it
+    is deliberately the wider of the two: the CLI can afford to let a bug's
+    traceback through to a terminal, and a GUI has no terminal to let it
+    through to.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    def excepthook(kind, value, traceback) -> None:
+        log.exception("Unhandled exception in the GUI", exc_info=(kind, value, traceback))
+        QMessageBox.critical(
+            None,
+            "Unexpected error",
+            f"{kind.__name__}: {value}\n\nThe details were written to the log.",
+        )
+
+    sys.excepthook = excepthook
 
 
 if __name__ == "__main__":

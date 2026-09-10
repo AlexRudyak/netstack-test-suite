@@ -312,3 +312,64 @@ def test_none_writes_no_report(monkeypatch, stub_result, tmp_path) -> None:
         )
     cli_main._emit_results(stub_result, tmp_path, report=formats.NO_REPORT, debug=False)
     assert called == []
+
+
+# --- The entry-point error boundary ---------------------------------------
+# NetstackCLI.invoke renders a NetstackError as a message and exits with the
+# code the exception carries. Before it, an unparseable --payload-hex or an
+# unreadable --payload-file reached the operator as a raw traceback naming
+# neither the flag at fault nor what to do about it.
+
+
+def _send_args(*extra: str) -> list[str]:
+    return [
+        "send", "--proto", "tcp", "--iface", "eth0",
+        "--src-ip", "10.0.0.1", "--dst-ip", "10.0.0.5",
+        "--src-port", "1234", "--dst-port", "80",
+        "--src-mac", "aa:bb:cc:dd:ee:ff", "--dst-mac", "aa:bb:cc:dd:ee:00",
+        "--payload-mode", "custom", *extra,
+    ]
+
+
+def test_unparseable_payload_hex_is_a_message_not_a_traceback() -> None:
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload-hex", "zz"))
+
+    assert result.exit_code == 2
+    assert "Error: payload hex is not valid hex" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_unreadable_payload_file_is_a_message_not_a_traceback(tmp_path) -> None:
+    missing = tmp_path / "absent.bin"
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload-file", str(missing)))
+
+    assert result.exit_code == 2
+    assert "could not be read" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_the_boundary_uses_the_exception_s_own_exit_code(monkeypatch) -> None:
+    """The code belongs with the failure that decides it, so a script can
+    tell an unauthorized target from unparseable flags."""
+    from src.errors import UnauthorizedTargetError
+
+    def explode(*_args, **_kwargs):
+        raise UnauthorizedTargetError("10.0.0.5 is not in the allow-list")
+
+    monkeypatch.setattr(cli_main, "send_custom_packet", explode)
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "hi"))
+
+    assert result.exit_code == UnauthorizedTargetError.exit_code == 3
+    assert "not in the allow-list" in result.output
+
+
+def test_a_bug_keeps_its_traceback(monkeypatch) -> None:
+    """The catch is narrow on purpose: hiding a genuine bug behind a tidy
+    one-line message would cost more than it saves."""
+    def explode(*_args, **_kwargs):
+        raise TypeError("this is a bug, not an operator error")
+
+    monkeypatch.setattr(cli_main, "send_custom_packet", explode)
+    result = CliRunner().invoke(cli_main.cli, _send_args("--payload", "hi"))
+
+    assert isinstance(result.exception, TypeError)

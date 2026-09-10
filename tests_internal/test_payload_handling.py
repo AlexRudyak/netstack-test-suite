@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.errors import ConfigurationError
 from src.packet_engine.builders import build_ip
 from src.packet_engine.payloads import (
     PayloadMode,
@@ -69,8 +70,33 @@ def test_resolve_payload_custom_returns_given_bytes() -> None:
 
 
 def test_resolve_payload_custom_without_bytes_raises() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfigurationError):
         resolve_payload(PayloadMode.CUSTOM)
+
+
+def test_unparseable_hex_names_the_input() -> None:
+    """The operator has to know which flag to fix, so this is a
+    ConfigurationError the CLI boundary renders — not fromhex's ValueError
+    arriving as a traceback."""
+    with pytest.raises(ConfigurationError, match="not valid hex"):
+        from_hex("zz")
+
+
+def test_unreadable_payload_file_names_the_path(tmp_path) -> None:
+    missing = tmp_path / "absent.bin"
+    with pytest.raises(ConfigurationError, match="could not be read"):
+        from_file(missing)
+
+
+def test_an_unhandled_payload_mode_stays_a_plain_error() -> None:
+    """An enum member with no generator is a bug in this module, not
+    operator input, so it must not be dressed up as a ConfigurationError
+    the boundary would render as a tidy one-liner."""
+    class _Rogue:
+        pass
+
+    with pytest.raises(ValueError, match="Unhandled PayloadMode"):
+        resolve_payload(_Rogue())  # type: ignore[arg-type]
 
 
 def test_payload_attaches_at_correct_offset_across_builders() -> None:

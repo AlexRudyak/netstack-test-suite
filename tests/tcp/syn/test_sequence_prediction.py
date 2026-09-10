@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 from scapy.layers.inet import TCP
 
-from src.packet_engine.builders import build_tcp, wrap_ethernet
 from src.packet_engine.sequence import TCPSequenceTracker
 
 pytestmark = [pytest.mark.tcp, pytest.mark.syn]
@@ -19,21 +18,13 @@ SAMPLE_COUNT = 20
 
 
 def test_isn_is_not_fixed_or_linearly_incrementing(
-    network_interface, dut_config, local_mac, dut_mac, local_ip
+    network_interface, dut_config, craft, source_ports, nodeid
 ) -> None:
     isns: list[int] = []
     for i in range(SAMPLE_COUNT):
         tracker = TCPSequenceTracker.new()
-        syn = wrap_ethernet(
-            build_tcp(
-                local_ip, dut_config.target_ip, 43000 + i, dut_config.target_port, flags="S", seq=tracker.seq
-            ),
-            local_mac,
-            dut_mac,
-        )
-        reply = network_interface.send_receive(
-            syn, timeout=dut_config.timeout, test_nodeid="test_isn_is_not_fixed_or_linearly_incrementing"
-        )
+        syn = craft.tcp(source_ports(), flags="S", seq=tracker.seq)
+        reply = network_interface.send_receive(syn, timeout=dut_config.timeout, test_nodeid=nodeid)
         assert reply is not None and reply.haslayer(TCP), f"No SYN-ACK on sample {i}"
         isns.append(reply[TCP].seq)
 

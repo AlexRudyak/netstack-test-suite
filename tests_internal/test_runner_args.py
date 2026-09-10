@@ -168,12 +168,16 @@ def test_source_port_arg_is_opt_in(tmp_path: Path) -> None:
 
 
 def test_role_is_passed(tmp_path: Path) -> None:
+    """The role reaching the subprocess is the one on the config — the only
+    copy there is, so it cannot disagree with what preflight and the vuln
+    allow-list check saw."""
     from src.config import Role
 
     assert "--role=client" in build_pytest_args(RunRequest(config=_config()), tmp_path)
-    assert "--role=server" in build_pytest_args(
-        RunRequest(config=_config(), role=Role.SERVER), tmp_path
+    server = DUTConfig(
+        interface="eth0", target_ip="10.0.0.5", target_stack="linux", role=Role.SERVER
     )
+    assert "--role=server" in build_pytest_args(RunRequest(config=server), tmp_path)
 
 
 # --- read_new_lines: robust incremental tailing ---------------------------

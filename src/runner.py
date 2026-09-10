@@ -97,7 +97,6 @@ class RunRequest:
     payload_size: int = 64
     confirm_vuln_tests: bool = False
     debug: bool = False  # write a tshark-style per-packet debug log for the run
-    role: Role = Role.CLIENT  # which side the suite plays (client/server)
     # Proxy-DUT topology. Setting proxy_mode enables the `proxy`-marked tests
     # (they're skipped otherwise) and requires a backend instance running
     # `netstack-cli proxy-serve` at backend_host:backend_port.
@@ -106,9 +105,25 @@ class RunRequest:
     proxy_port: int | None = None
     backend_host: str | None = None
     backend_port: int | None = None
-    # Aims the ORDINARY endpoint suites at one leg of a proxy DUT
-    # ("front"/"back"). It determines the role, so it overrides `role`.
-    proxy_leg: str | None = None
+
+    # `role` and `proxy_leg` are NOT fields: they are read off `config`,
+    # which already resolved them together via src.config.resolve_role /
+    # resolve_leg_target. Carrying second copies here let the value that
+    # reached the pytest subprocess disagree with the one preflight, the
+    # vuln allow-list check and the reports used — and role decides which
+    # direction traffic is sent at the DUT, so that divergence is the
+    # highest-consequence one available. Set them on the config instead.
+
+    @property
+    def role(self) -> Role:
+        """Which side the suite plays (client/server)."""
+        return self.config.role
+
+    @property
+    def proxy_leg(self) -> str | None:
+        """The proxy leg the ordinary endpoint suites are aimed at
+        ("front"/"back"), as the subprocess flag spells it."""
+        return self.config.proxy_leg.value if self.config.proxy_leg else None
 
 
 TestEventCallback = Callable[[TestEvent], None]

@@ -8,6 +8,7 @@ each of those, plus the pass-through from RunRequest to the subprocess.
 """
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -53,8 +54,7 @@ def test_leg_and_front_address_reach_the_subprocess(tmp_path: Path) -> None:
     """A front-leg run needs the proxy address even with no proxy-marked
     tests selected — that's what the ordinary suites retarget to."""
     request = RunRequest(
-        config=_config(),
-        proxy_leg="front",
+        config=_config(proxy_leg=ProxyLeg.FRONT),
         proxy_host="10.0.0.5",
         proxy_port=1080,
     )
@@ -228,3 +228,21 @@ def test_inducer_drives_real_connections_through_a_stub_proxy() -> None:
         assert backend.stats.tcp_connections >= 3
     finally:
         backend.stop()
+
+
+def test_request_cannot_disagree_with_its_config_about_role_or_leg() -> None:
+    """RunRequest reads role/proxy_leg off its config rather than copying
+    them. Copies let the value reaching the pytest subprocess diverge from
+    the one preflight and the vuln allow-list check saw — and role decides
+    which direction traffic is sent at the DUT.
+    """
+    fields = {f.name for f in dataclasses.fields(RunRequest)}
+    assert "role" not in fields and "proxy_leg" not in fields, (
+        "RunRequest grew a role/proxy_leg field again — they belong to "
+        "DUTConfig, which resolves them together (src.config.resolve_role)."
+    )
+
+    config = _config(proxy_leg=ProxyLeg.BACK, role=Role.SERVER)
+    request = RunRequest(config=config)
+    assert request.role is config.role
+    assert request.proxy_leg == ProxyLeg.BACK.value

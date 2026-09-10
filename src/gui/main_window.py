@@ -338,9 +338,9 @@ class MainWindow(QMainWindow):
             targets=tuple(self._tree.checked_targets()),
             confirm_vuln_tests=self._confirm_vuln.isChecked(),
             debug=self._debug.isChecked(),
-            role=config.role,
+            # role/proxy_leg come from `config` (resolved in
+            # _current_dut_config) — RunRequest deliberately has no copies.
             proxy_mode=self._proxy_mode.currentData(),
-            proxy_leg=config.proxy_leg.value if config.proxy_leg else None,
             proxy_host=proxy_host,
             proxy_port=proxy_port,
             backend_host=backend_host,

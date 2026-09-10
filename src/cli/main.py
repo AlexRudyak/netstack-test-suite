@@ -233,9 +233,9 @@ def run(
         payload_size=payload_size,
         confirm_vuln_tests=confirm_vuln_tests,
         debug=debug,
-        role=resolved_role,
+        # role/proxy_leg are read off `config` (which _resolve_topology
+        # already settled) — RunRequest deliberately has no copies.
         proxy_mode=proxy_mode,
-        proxy_leg=proxy_leg,
         proxy_host=proxy_host,
         proxy_port=proxy_port,
         backend_host=backend_host,

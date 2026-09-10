@@ -12,11 +12,20 @@ import platform
 import subprocess
 import sys
 
+from src.errors import InsufficientPrivilegesError, UnsupportedHostError
 from src.packet_engine.platform_backend import unsupported_host_message
 
-
-class InsufficientPrivilegesError(RuntimeError):
-    pass
+# Re-exported: callers (preflight, conftest) import it from here, next to
+# require_elevation. The class lives in src/errors.py so an entry-point
+# boundary can catch it through NetstackError.
+__all__ = [
+    "ElevationResult",
+    "InsufficientPrivilegesError",
+    "is_elevated",
+    "relaunch_module_as_admin",
+    "remediation_message",
+    "require_elevation",
+]
 
 
 def is_elevated() -> bool:
@@ -32,7 +41,7 @@ def is_elevated() -> bool:
         if os.geteuid() == 0:
             return True
         return _has_linux_capabilities()
-    raise RuntimeError(unsupported_host_message(system))
+    raise UnsupportedHostError(unsupported_host_message(system))
 
 
 def _has_linux_capabilities() -> bool:

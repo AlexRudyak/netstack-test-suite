@@ -20,22 +20,14 @@ import socket
 from dataclasses import dataclass
 from typing import Protocol
 
+from src.errors import ProxyTunnelError
 from src.proxy import tunnel
 from src.proxy.config import ProxyConfig, ProxyMode
 
-
-class ProxyTunnelError(RuntimeError):
-    """The DUT refused or mishandled the tunnel-establishment handshake.
-
-    `details` carries whatever the DUT managed to report before the
-    failure (an HTTP error response, a non-zero SOCKS5 reply), or None
-    when it said nothing. The conformance tests assert on it: "refused
-    with a defined error code" is a pass, "reported success" is not.
-    """
-
-    def __init__(self, message: str, details: object = None) -> None:
-        super().__init__(message)
-        self.details = details
+# Re-exported: raised by every handshake here and re-exported again by
+# client.py, which is where callers reach for it. The class lives in
+# src/errors.py so it shares the NetstackError base.
+__all__ = ["ProxyTunnelError", "Socks5Result", "TunnelHandshake", "for_config"]
 
 
 class TunnelHandshake(Protocol):

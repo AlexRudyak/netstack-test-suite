@@ -22,9 +22,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from src.proxy.config import DEFAULT_BACKEND_PORT
-
-RECV_CHUNK = 65536
+from src.proxy.config import DEFAULT_BACKEND_PORT, RECV_CHUNK
 
 
 @dataclass

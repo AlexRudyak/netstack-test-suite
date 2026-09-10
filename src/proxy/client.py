@@ -15,8 +15,7 @@ import socket
 from dataclasses import dataclass
 
 from src.proxy import tunnel
-from src.proxy.backend import RECV_CHUNK
-from src.proxy.config import ProxyConfig, ProxyMode
+from src.proxy.config import RECV_CHUNK, ProxyConfig, ProxyMode
 
 
 class ProxyTunnelError(RuntimeError):

@@ -56,3 +56,44 @@ def test_wrap_ethernet_prefixes_ether_header() -> None:
     assert pkt[Ether].src == "aa:bb:cc:dd:ee:ff"
     assert pkt[Ether].dst == "11:22:33:44:55:66"
     assert pkt.haslayer(IP)
+
+
+# --- custom packet protocol selection --------------------------------------
+
+
+def test_custom_packet_proto_is_an_enum_not_a_string() -> None:
+    """`proto` was a bare `str` with a `# "tcp" | "udp"` comment, and the
+    valid pair was retyped as a literal list in three places. A typo
+    reached the builder and raised at send time, not at parse time."""
+    from src.custom_packet.builder import Proto
+
+    assert {p.value for p in Proto} == {"tcp", "udp"}
+    with pytest.raises(ValueError):
+        Proto("TCP")
+
+
+def test_both_protocols_build_an_ethernet_framed_packet() -> None:
+    from src.custom_packet.builder import CustomPacketSpec, Proto, build_custom_packet
+
+    for proto, layer in ((Proto.TCP, TCP), (Proto.UDP, UDP)):
+        packet = build_custom_packet(
+            CustomPacketSpec(
+                proto=proto,
+                src_ip="10.0.0.1",
+                dst_ip="10.0.0.5",
+                src_port=41000,
+                dst_port=80,
+                src_mac="aa:aa:aa:aa:aa:aa",
+                dst_mac="bb:bb:bb:bb:bb:bb",
+            )
+        )
+        assert packet.haslayer(Ether) and packet.haslayer(IP) and packet.haslayer(layer)
+
+
+def test_cli_and_gui_offer_exactly_the_declared_protocols() -> None:
+    """Both front ends derive their choice list from the enum."""
+    import src.cli.main as cli_main
+    from src.custom_packet.builder import Proto
+
+    option = next(p for p in cli_main.send.params if p.name == "proto")
+    assert set(option.type.choices) == {p.value for p in Proto}

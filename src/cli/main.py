@@ -27,7 +27,7 @@ from src.config import (
     resolve_leg_target,
     resolve_role,
 )
-from src.custom_packet.builder import CustomPacketSpec
+from src.custom_packet.builder import CustomPacketSpec, Proto
 from src.custom_packet.sender import send_custom_packet
 from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 from src.packet_engine.preflight import run_preflight
@@ -252,7 +252,7 @@ def run(
 
 
 @cli.command()
-@click.option("--proto", type=click.Choice(["tcp", "udp"]), required=True)
+@click.option("--proto", type=click.Choice([p.value for p in Proto]), required=True)
 @click.option("--iface", required=True)
 @click.option("--src-ip", required=True)
 @click.option("--dst-ip", required=True)
@@ -299,7 +299,7 @@ def send(
             )
 
     spec = CustomPacketSpec(
-        proto=proto,
+        proto=Proto(proto),
         src_ip=src_ip,
         dst_ip=dst_ip,
         src_port=src_port,

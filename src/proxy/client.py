@@ -14,11 +14,7 @@ from __future__ import annotations
 import socket
 from dataclasses import dataclass
 
-# Imported as a submodule, NOT `from src.proxy import tunnel`: that form
-# re-enters the package __init__, which imports this module back — a real
-# import cycle that only survives because `tunnel` is a submodule. Importing
-# it directly breaks the edge.
-import src.proxy.tunnel as tunnel
+from src.proxy import tunnel
 from src.proxy.backend import RECV_CHUNK
 from src.proxy.config import ProxyConfig, ProxyMode
 

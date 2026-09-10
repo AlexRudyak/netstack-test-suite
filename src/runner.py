@@ -23,6 +23,7 @@ front ends must agree on.
 from __future__ import annotations
 
 import json
+import logging
 import platform
 import subprocess
 import sys
@@ -47,6 +48,8 @@ from src.reporting.models import (
 from src.run_artifacts import RunArtifacts
 
 POLL_INTERVAL_S = 0.2
+
+log = logging.getLogger(__name__)
 
 
 def reports_dir() -> Path:
@@ -430,9 +433,20 @@ def parse_report_log_line(line: str) -> TestEvent | None:
       test body never ran), a setup skip is a SKIP.
     - teardown: only a failure, surfaced as ERROR.
     A passing setup/teardown is ignored (the call phase carries the result).
+
+    A line that isn't parseable JSON is dropped with a warning rather than
+    raised. This runs in a polling loop over a file a *separate process* is
+    still appending to, so a truncated or interleaved line is a condition of
+    the medium, not a bug — and letting it raise cost the whole run: in the
+    CLI it aborts stream_run with the pytest subprocess still running and no
+    results.json written, and in the GUI it leaves a QTimer slot.
     """
-    data = json.loads(line)
-    if data.get("$report_type") != "TestReport":
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError:
+        log.warning("Skipping unparseable report-log line: %.120r", line)
+        return None
+    if not isinstance(data, dict) or data.get("$report_type") != "TestReport":
         return None
 
     when = data.get("when")
@@ -474,16 +488,26 @@ def parse_report_log_line(line: str) -> TestEvent | None:
 def drain_packet_events(
     path: Path, offset: int, result: TestRunResult, callback: PacketEventCallback | None
 ) -> int:
+    """Parse appended packet-event lines into the result.
+
+    Malformed lines are skipped for the same reason as in
+    parse_report_log_line: this tails a file another process is writing, and
+    one bad line must cost one plot point rather than the run.
+    """
     lines, new_offset = read_new_lines(path, offset)
     for line in lines:
-        data = json.loads(line)
-        event = PacketEvent(
-            timestamp=data["timestamp"],
-            direction=PacketDirection(data["direction"]),
-            summary=data["summary"],
-            size_bytes=data["size_bytes"],
-            test_nodeid=data.get("test_nodeid"),
-        )
+        try:
+            data = json.loads(line)
+            event = PacketEvent(
+                timestamp=data["timestamp"],
+                direction=PacketDirection(data["direction"]),
+                summary=data["summary"],
+                size_bytes=data["size_bytes"],
+                test_nodeid=data.get("test_nodeid"),
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            log.warning("Skipping unparseable packet-event line: %.120r", line)
+            continue
         result.packet_events.append(event)
         if callback:
             callback(event)

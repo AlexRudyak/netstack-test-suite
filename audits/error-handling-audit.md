@@ -34,6 +34,49 @@ them by name:
 
 ---
 
+## Status: all 22 findings applied
+
+Every finding was applied on branch `development`, in the priority order
+this report set out. Each finding below keeps its original analysis and
+remediation snippet, so the record of *what was wrong and why* survives
+alongside the fix.
+
+Verification after the final change:
+
+- `pytest tests_internal/ -q` -> **291 passed** (220 at `4653b25`, plus 71
+  new tests covering the paths these findings describe)
+- `pytest --collect-only -q` -> no import errors
+- `ruff check .` -> clean, `C901` still enforced at max-complexity 10
+
+| Finding | Commit | Note |
+|---|---|---|
+| F-05 vuln gate on the marker | `e3c70ba` | + `tests_internal/test_vuln_gate.py` |
+| F-08 drain loop guards | `5955a96` | both reproductions became regression tests |
+| F-01 exception hierarchy | `e0a69bd` | new `src/errors.py`, + an AST guard |
+| F-02 entry-point boundaries | `3da3344` | CLI narrow, GUI wide; both pinned |
+| F-13 client socket leak | `d47fe1d` | |
+| F-12 backend partial start | `3704318` | also fixed restart-after-stop |
+| F-09 QProcess launch failure | `cda1220` | the test caught a bug in the fix |
+| F-16 + F-17 report failures | `77ff2bb` | CLI keeps the exit code; GUI stays open |
+| F-18 capture teardown | `f622521` | out of the `finally:` |
+| F-11 recorder sinks | `dc03f02` | `assert` -> a guard `-O` can't strip |
+| F-10 jsonl writer lock | `31f921c` | |
+| F-06 allow-list parsing | `2f8a0f4` | + parse-time CIDR validation |
+| F-04 exit codes | `90a5e37` | `send`, `proxy-serve` |
+| F-14 inducer backoff | `3005c0f` | + failure breakdown by type |
+| F-19 – F-22 logging | `6847551` | GUI log file, `--verbose`, two logged reasons |
+| F-03 error provenance | `dd77581` | + an IndexError in `read_socks5_reply` |
+| F-07 CONNECT hints | `fe9aec3` | |
+| F-15 dead `retries` field | `cdf9cdf` | removed, with the reasoning recorded |
+
+Three fixes were adjusted by their own tests before landing, which is
+worth recording: the F-09 timer was started after `QProcess.start`, whose
+`errorOccurred` fires synchronously; F-01's guard test correctly rejected
+`ProtocolViolation` being declared in `tunnel.py`; and F-03's first pass
+labelled three encoder-input errors as the DUT's fault.
+
+---
+
 ## Executive summary
 
 The package's **decision logic** around errors is unusually good: `PreflightResult`

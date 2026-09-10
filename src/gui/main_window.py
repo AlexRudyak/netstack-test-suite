@@ -57,11 +57,15 @@ class MainWindow(QMainWindow):
         # Chosen once, the first time a run leaves the destination port unset,
         # then reused for the rest of the session.
         self._session_random_dst_port: int | None = None
+        # Set when the runner process failed to launch, so the generic
+        # "no tests ran" line doesn't follow the specific reason.
+        self._launch_failed = False
         self._controller = RunController(self)
         self._controller.test_event.connect(self._on_test_event)
         self._controller.packet_event.connect(self._on_packet_event)
         self._controller.output_line.connect(self._on_output_line)
         self._controller.finished.connect(self._on_finished)
+        self._controller.failed.connect(self._on_launch_failed)
 
         self._build_ui()
 
@@ -246,6 +250,7 @@ class MainWindow(QMainWindow):
         self._metrics.clear()
         self._plot.reset()
         self._log_panel.clear_log()
+        self._launch_failed = False
         # Surface progress/errors as text — the Log tab is where the run
         # actually reports what happened (a blank Live plot was exactly why
         # a failed run looked like "nothing happened").
@@ -357,8 +362,20 @@ class MainWindow(QMainWindow):
     def _on_output_line(self, line: str) -> None:
         self._log_panel.append_line(line)
 
+    def _on_launch_failed(self, message: str) -> None:
+        """The runner process never started. Nothing else will report it —
+        a QProcess that fails to start emits no `finished`."""
+        self._launch_failed = True
+        self._log_panel.append_line(message)
+        self._log_panel.append_line(
+            "No tests were run. Check that the Python interpreter and the test "
+            "tree are reachable from the project directory."
+        )
+
     def _on_finished(self, result: TestRunResult) -> None:
         self._report_panel.set_result(result)
+        if self._launch_failed:
+            return  # _on_launch_failed already said what went wrong
         if result.errored:
             self._log_panel.append_line(
                 f"pytest exited with code {result.pytest_returncode} "

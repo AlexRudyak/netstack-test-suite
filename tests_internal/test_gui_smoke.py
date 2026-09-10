@@ -616,3 +616,46 @@ def test_a_real_pytest_exit_code_is_still_recorded(qtbot, tmp_path) -> None:
     result = blocker.args[0]
     assert result.pytest_returncode == 2
     assert result.errored
+
+
+def test_a_malformed_port_is_reported_not_silently_dropped(qtbot) -> None:
+    """None means "unset" everywhere in this codebase, so degrading a typo
+    to None ran the suite against the default backend port — or, on a front
+    leg, a random ephemeral one — instead of what was typed."""
+    from src.errors import ConfigurationError
+    from src.gui.main_window import _split_host_port
+
+    with pytest.raises(ConfigurationError, match="not a port number"):
+        _split_host_port("10.0.0.5:abc")
+
+
+def test_host_only_fields_still_yield_an_unset_port(qtbot) -> None:
+    """Only a port that is present and unparseable is an error; a field with
+    no port at all is a host, and stays one."""
+    from src.gui.main_window import _split_host_port
+
+    assert _split_host_port("") == (None, None)
+    assert _split_host_port("10.0.0.5") == ("10.0.0.5", None)
+    assert _split_host_port("10.0.0.5:") == ("10.0.0.5", None)
+    assert _split_host_port("[::1]") == ("::1", None)
+    assert _split_host_port("[::1]:9099") == ("::1", 9099)
+    assert _split_host_port("10.0.0.9:9099") == ("10.0.0.9", 9099)
+
+
+def test_a_malformed_proxy_field_blocks_the_run(qtbot, monkeypatch) -> None:
+    """_on_run_clicked is a `clicked` slot: the report has to reach the log
+    panel, and the exception must not reach sys.excepthook."""
+    from src.gui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._target_ip.setText("10.0.0.5")
+    window._proxy_backend.setText("10.0.0.9:not-a-port")
+
+    started: list[object] = []
+    monkeypatch.setattr(window._controller, "start", started.append)
+
+    window._on_run_clicked()
+
+    assert not started, "the run started with a port the operator did not type"
+    assert "not a port number" in window._log_panel.toPlainText()

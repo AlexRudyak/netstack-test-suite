@@ -105,3 +105,28 @@ def test_proxy_tunnel_error_still_carries_details() -> None:
 
     assert exc.details is reply
     assert errors.ProxyTunnelError("nothing reported").details is None
+
+
+def test_an_unknown_target_stack_is_a_netstack_error() -> None:
+    """The lookup failures have to reach the boundary like everything else.
+
+    `platform_backend.get_backend` already raised UnsupportedHostError;
+    `get_profile` still raised a bare ValueError, which the CLI boundary
+    deliberately does not catch — so it printed a traceback instead of
+    naming the flag and listing the valid values.
+    """
+    from src.target_profiles import get_profile, list_profiles
+
+    with pytest.raises(errors.ConfigurationError) as caught:
+        get_profile("linuxx")
+
+    assert isinstance(caught.value, errors.NetstackError)
+    for name in list_profiles():
+        assert name in str(caught.value), "the message does not list the valid options"
+
+
+def test_known_target_stacks_still_resolve_case_insensitively() -> None:
+    from src.target_profiles import get_profile
+
+    assert get_profile("LINUX").name == "linux"
+    assert get_profile("windows").name == "windows"

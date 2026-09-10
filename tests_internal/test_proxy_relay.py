@@ -16,10 +16,11 @@ import threading
 
 import pytest
 
+from src.errors import ProtocolViolation
 from src.proxy import tunnel
 from src.proxy.backend import EchoBackend
 from src.proxy.client import ProxyClient, ProxyTunnelError
-from src.proxy.config import ProxyConfig, ProxyMode
+from src.proxy.config import RECV_CHUNK, ProxyConfig, ProxyMode
 
 pytestmark = [pytest.mark.internal]
 
@@ -227,6 +228,75 @@ def test_client_half_close_propagates_to_eof(backend, mode: ProxyMode) -> None:
             assert client.recv_exact(5) == b"final"
             client.half_close()
             assert client.read_until_eof() == b""  # clean EOF, no hang
+
+
+class HangingOrigin:
+    """Echoes once, then holds the connection open forever.
+
+    The smallest form of the defect the half-close tests exist to find: a
+    peer that never propagates the close. `read_until_eof` used to return
+    b"" here — the same value a clean EOF produces — so the test asserting
+    "we observed a clean EOF" passed on the hang.
+    """
+
+    def __init__(self) -> None:
+        self._stop = threading.Event()
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind((LOOPBACK, 0))
+        self._sock.listen(1)
+        self._sock.settimeout(0.5)
+        self.port: int = self._sock.getsockname()[1]
+        self._held: list[socket.socket] = []
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+    def __enter__(self) -> "HangingOrigin":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._stop.set()
+        for conn in self._held:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+        self._thread.join(timeout=2)
+
+    def _serve(self) -> None:
+        try:
+            conn, _ = self._sock.accept()
+        except OSError:
+            return
+        self._held.append(conn)
+        try:
+            data = conn.recv(RECV_CHUNK)
+            if data:
+                conn.sendall(data)
+        except OSError:
+            return
+        self._stop.wait()  # never send FIN
+
+
+def test_read_until_eof_raises_when_the_peer_never_closes() -> None:
+    """A read timeout is the opposite verdict from EOF, so it must not
+    return the same bytes: b"" means "the close was propagated"."""
+    with HangingOrigin() as origin:
+        config = ProxyConfig(
+            mode=ProxyMode.TRANSPARENT,
+            backend_host=LOOPBACK,
+            backend_port=origin.port,
+            timeout=0.5,
+        )
+        with ProxyClient(config) as client:
+            assert client.roundtrip(b"last-write") == b"last-write"
+            client.half_close()
+            with pytest.raises(ProtocolViolation, match="did not propagate"):
+                client.read_until_eof()
 
 
 def test_tunnel_details_expose_rfc_fields(backend) -> None:

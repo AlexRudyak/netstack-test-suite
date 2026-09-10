@@ -76,3 +76,23 @@ def test_server_role_tests_are_present() -> None:
     expansion) — at least one per applicable module."""
     server_modules = {s.module for s in catalog.CATALOG if Role.SERVER in s.roles}
     assert {"tcp", "udp", "icmp"} <= server_modules
+
+
+def test_file_and_test_tail_is_unique_across_the_catalog() -> None:
+    """find_by_nodeid resolves prefixed node ids through a `<file>.py::<test>`
+    index instead of scanning every spec. That index is only correct while
+    the tail is unique — two files with the same stem and a same-named test
+    would silently resolve to whichever was built last."""
+    from src.catalog import _BY_SUFFIX
+
+    assert len(_BY_SUFFIX) == len(catalog.CATALOG)
+
+
+def test_find_by_nodeid_resolves_prefixed_and_windows_node_ids() -> None:
+    """pytest can report an absolute path, and Windows reports backslashes."""
+    spec = catalog.CATALOG[0]
+
+    assert catalog.find_by_nodeid(spec.nodeid) is spec
+    assert catalog.find_by_nodeid(f"/abs/checkout/{spec.nodeid}") is spec
+    assert catalog.find_by_nodeid(spec.nodeid.replace("/", "\\")) is spec
+    assert catalog.find_by_nodeid("tests/ip/test_nope.py::test_nope") is None

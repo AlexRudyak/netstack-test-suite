@@ -27,15 +27,15 @@ from src.config import (
     resolve_leg_target,
     resolve_role,
 )
-from src.custom_packet.builder import CustomPacketSpec
+from src.custom_packet.builder import CustomPacketSpec, Proto
 from src.custom_packet.sender import send_custom_packet
 from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 from src.packet_engine.preflight import run_preflight
 from src.packet_engine.recorder import PacketRecorder, build_host_filter
 from src.proxy.backend import EchoBackend
 from src.proxy.config import DEFAULT_BACKEND_PORT, ProxyMode
-from src.reporting.html_report import generate_html_report
-from src.reporting.pdf_report import generate_pdf_report
+from src.reporting import formats
+from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest, run_tests
 from src.target_profiles import list_profiles
 from src.utils.logging_config import configure_logging
@@ -106,12 +106,13 @@ def _resolve_topology(
 
 def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
     """Print the run's outcome, write the report, and return the exit code."""
+    artifacts = RunArtifacts(run_dir)
     if result.errored:
         # pytest itself failed to run the tests (collection/usage error,
         # no tests). Don't masquerade as a clean pass — point at the log.
         click.echo(
             f"\npytest exited with code {result.pytest_returncode} "
-            f"(collection/usage error or no tests). See {run_dir / 'pytest_output.log'}",
+            f"(collection/usage error or no tests). See {artifacts.pytest_output}",
             err=True,
         )
         return result.pytest_returncode or 2
@@ -120,16 +121,15 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
     if result.total == 0:
         click.echo(
             "No tests ran. Check your --module/--submodule/--test selection and "
-            f"the target configuration. Raw output: {run_dir / 'pytest_output.log'}",
+            f"the target configuration. Raw output: {artifacts.pytest_output}",
             err=True,
         )
 
     if debug:
-        click.echo(f"Debug log: {run_dir / 'debug.log'}")
-    if report == "pdf":
-        click.echo(f"PDF report: {generate_pdf_report(result, run_dir / 'report.pdf')}")
-    elif report == "html":
-        click.echo(f"HTML report: {generate_html_report(result, run_dir / 'report.html')}")
+        click.echo(f"Debug log: {artifacts.debug_log}")
+    fmt = formats.BY_KEY.get(report)
+    if fmt is not None:
+        click.echo(f"{fmt.label} report: {fmt.generate(result, artifacts.report(fmt.key))}")
 
     return 1 if (result.failed or result.errors) else 0
 
@@ -151,7 +151,7 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
     default=False,
     help="Write a tshark-style per-packet debug log to reports/<run_id>/debug.log.",
 )
-@click.option("--report", type=click.Choice(["pdf", "html", "none"]), default="pdf")
+@click.option("--report", type=click.Choice(formats.CLI_CHOICES), default="pdf")
 @click.option(
     "--skip-preflight",
     is_flag=True,
@@ -233,9 +233,9 @@ def run(
         payload_size=payload_size,
         confirm_vuln_tests=confirm_vuln_tests,
         debug=debug,
-        role=resolved_role,
+        # role/proxy_leg are read off `config` (which _resolve_topology
+        # already settled) — RunRequest deliberately has no copies.
         proxy_mode=proxy_mode,
-        proxy_leg=proxy_leg,
         proxy_host=proxy_host,
         proxy_port=proxy_port,
         backend_host=backend_host,
@@ -252,7 +252,7 @@ def run(
 
 
 @cli.command()
-@click.option("--proto", type=click.Choice(["tcp", "udp"]), required=True)
+@click.option("--proto", type=click.Choice([p.value for p in Proto]), required=True)
 @click.option("--iface", required=True)
 @click.option("--src-ip", required=True)
 @click.option("--dst-ip", required=True)
@@ -299,7 +299,7 @@ def send(
             )
 
     spec = CustomPacketSpec(
-        proto=proto,
+        proto=Proto(proto),
         src_ip=src_ip,
         dst_ip=dst_ip,
         src_port=src_port,

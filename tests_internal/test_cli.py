@@ -28,7 +28,8 @@ def test_run_command_builds_expected_request(monkeypatch, stub_result) -> None:
         return stub_result
 
     monkeypatch.setattr(cli_main, "run_tests", fake_run_tests)
-    monkeypatch.setattr(cli_main, "generate_pdf_report", lambda result, path: path)
+    # No report generator stub needed — the invocation below passes
+    # --report none, which is the absence of a format rather than one.
 
     runner = CliRunner()
     result = runner.invoke(
@@ -270,3 +271,44 @@ def test_record_command_explicit_filter_overrides_dut_ip(monkeypatch, tmp_path) 
 
     assert result.exit_code == 0, result.output
     assert captured["bpf_filter"] == "tcp port 80"
+
+
+# --- report formats come from the registry, not a retyped list -------------
+
+
+def test_report_choices_are_the_declared_formats_plus_the_opt_out() -> None:
+    """--report used to spell out ["pdf", "html", "none"] beside an
+    if/elif that dispatched on the same strings. A format added to one and
+    not the other is either unreachable or rejected at the parser."""
+    from src.reporting import formats
+
+    option = next(p for p in cli_main.run.params if p.name == "report")
+    assert set(option.type.choices) == {fmt.key for fmt in formats.FORMATS} | {formats.NO_REPORT}
+
+
+def test_each_format_writes_a_report_named_for_its_key(monkeypatch, stub_result, tmp_path) -> None:
+    from src.reporting import formats
+
+    for fmt in formats.FORMATS:
+        written: list = []
+        monkeypatch.setitem(
+            formats.BY_KEY,
+            fmt.key,
+            formats.ReportFormat(fmt.key, fmt.label, lambda r, path: written.append(path) or path),
+        )
+        cli_main._emit_results(stub_result, tmp_path, report=fmt.key, debug=False)
+        assert written == [tmp_path / f"report.{fmt.key}"]
+
+
+def test_none_writes_no_report(monkeypatch, stub_result, tmp_path) -> None:
+    from src.reporting import formats
+
+    called: list = []
+    for fmt in formats.FORMATS:
+        monkeypatch.setitem(
+            formats.BY_KEY,
+            fmt.key,
+            formats.ReportFormat(fmt.key, fmt.label, lambda r, path: called.append(path) or path),
+        )
+    cli_main._emit_results(stub_result, tmp_path, report=formats.NO_REPORT, debug=False)
+    assert called == []

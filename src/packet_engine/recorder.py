@@ -64,7 +64,9 @@ class PacketRecorder:
         self.iface = iface
         self.output_path = output_path
         self.bpf_filter = bpf_filter
-        self._on_packet = on_packet
+        # A list for the same reason as NetworkInterface's: one callback
+        # meant a second consumer had to displace the first.
+        self._sinks: list[RecorderCallback] = [on_packet] if on_packet is not None else []
         self._backend = backend or get_backend()
         self._backend.configure()
 
@@ -78,14 +80,20 @@ class PacketRecorder:
         with self._lock:
             return self._packet_count
 
+    def subscribe(self, sink: RecorderCallback) -> None:
+        """Add a sink called from the sniffer thread for every matching
+        frame. Sinks run in subscription order; a sink that blocks holds up
+        the capture, so keep them cheap."""
+        self._sinks.append(sink)
+
     def _handle(self, packet: Packet) -> None:
         # Called from the sniffer thread for every matching frame.
         assert self._writer is not None
         self._writer.write(packet)  # incremental flush to disk
         with self._lock:
             self._packet_count += 1
-        if self._on_packet is not None:
-            self._on_packet(packet)
+        for sink in self._sinks:
+            sink(packet)
 
     def start(self, *, count: int = 0, timeout: float | None = None) -> None:
         """Begin recording. Non-blocking — returns immediately while the

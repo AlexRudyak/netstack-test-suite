@@ -56,9 +56,25 @@ class NetworkInterface:
         # zero packets leaves no empty file.
         self._pcap_writer: PcapWriter | None = None
         self._packet_count = 0
-        self._on_packet = on_packet
+        # A list, not a single slot. `on_packet` was one callback, so the
+        # GUI's live view and the jsonl writer could not both subscribe —
+        # a second in-process consumer had nowhere to attach.
+        self._sinks: list[PacketCallback] = [on_packet] if on_packet is not None else []
         self._debug_logger = debug_logger
         self._lock = threading.Lock()
+
+    def subscribe(self, sink: PacketCallback) -> None:
+        """Add a packet sink, called for every frame this interface records.
+
+        Sinks run in subscription order and their exceptions are not caught:
+        a broken sink is a bug, not a mid-capture condition to swallow.
+
+        The pcap writer and the debug logger are deliberately NOT sinks —
+        they need the raw `Packet`, and a PacketEvent only carries its
+        `summary()` string. Routing them through here would silently reduce
+        the capture to summaries.
+        """
+        self._sinks.append(sink)
 
     def send(self, packet: Packet, *, test_nodeid: str | None = None) -> None:
         sendp(packet, iface=self.iface, verbose=False)
@@ -106,16 +122,16 @@ class NetworkInterface:
             self._debug_logger.log_packet(
                 packet, _DEBUG_DIRECTION[direction], test_nodeid=test_nodeid
             )
-        if self._on_packet is not None:
-            self._on_packet(
-                PacketEvent(
-                    timestamp=time.time(),
-                    direction=direction,
-                    summary=packet.summary(),
-                    size_bytes=len(packet),
-                    test_nodeid=test_nodeid,
-                )
+        if self._sinks:
+            event = PacketEvent(
+                timestamp=time.time(),
+                direction=direction,
+                summary=packet.summary(),
+                size_bytes=len(packet),
+                test_nodeid=test_nodeid,
             )
+            for sink in self._sinks:
+                sink(event)
 
     @property
     def captured_count(self) -> int:

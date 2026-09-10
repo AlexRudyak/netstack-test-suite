@@ -42,6 +42,7 @@ from src.proxy.config import ProxyMode
 from src.plotting.metrics import MetricsBuffer
 from src.plotting.realtime_plotter import RealtimePlotWidget
 from src.reporting.models import PacketEvent, TestEvent, TestRunResult
+from src.run_artifacts import RunArtifacts
 from src.runner import RunRequest
 from src.target_profiles import list_profiles
 
@@ -338,9 +339,9 @@ class MainWindow(QMainWindow):
             targets=tuple(self._tree.checked_targets()),
             confirm_vuln_tests=self._confirm_vuln.isChecked(),
             debug=self._debug.isChecked(),
-            role=config.role,
+            # role/proxy_leg come from `config` (resolved in
+            # _current_dut_config) — RunRequest deliberately has no copies.
             proxy_mode=self._proxy_mode.currentData(),
-            proxy_leg=config.proxy_leg.value if config.proxy_leg else None,
             proxy_host=proxy_host,
             proxy_port=proxy_port,
             backend_host=backend_host,
@@ -361,7 +362,8 @@ class MainWindow(QMainWindow):
         if result.errored:
             self._log_panel.append_line(
                 f"pytest exited with code {result.pytest_returncode} "
-                f"(collection/usage error or no tests) — see reports/{result.run_id}/pytest_output.log"
+                f"(collection/usage error or no tests) — see "
+                f"reports/{result.run_id}/{RunArtifacts.PYTEST_OUTPUT}"
             )
         elif result.total == 0:
             self._log_panel.append_line(

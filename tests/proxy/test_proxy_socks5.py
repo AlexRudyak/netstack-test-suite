@@ -20,11 +20,12 @@ pytestmark = [pytest.mark.proxy]
 def test_socks5_negotiation_and_connect_succeed(socks5_config) -> None:
     """RFC 1928 §3/§4/§6: method selection, then CONNECT answered REP=0x00."""
     with ProxyClient(socks5_config) as client:
-        assert client.details.socks_method == tunnel.AUTH_NONE, (
-            f"proxy selected method 0x{client.details.socks_method:02x}; "
+        result = client.details  # a Socks5Result under this mode
+        assert result.method == tunnel.AUTH_NONE, (
+            f"proxy selected method 0x{result.method:02x}; "
             "expected 0x00 (NO AUTHENTICATION REQUIRED)"
         )
-        reply = client.details.socks_reply
+        reply = result.reply
         assert reply is not None
         assert reply.succeeded, (
             f"CONNECT reply REP=0x{reply.reply_code:02x} ({reply.message}); "
@@ -38,8 +39,8 @@ def test_socks5_never_selects_an_unoffered_method(socks5_config) -> None:
     """RFC 1928 §3: the server selects one of the METHODS the client offered
     (or 0xFF). We offer only 0x00, so anything else is non-conformant."""
     with ProxyClient(socks5_config) as client:
-        assert client.details.socks_method in (tunnel.AUTH_NONE,), (
-            f"proxy selected method 0x{client.details.socks_method:02x}, which the client "
+        assert client.details.method in (tunnel.AUTH_NONE,), (
+            f"proxy selected method 0x{client.details.method:02x}, which the client "
             "never offered (RFC 1928 §3)"
         )
 
@@ -58,7 +59,9 @@ def test_socks5_connect_to_closed_origin_returns_failure_reply(
     finally:
         client.close()
 
-    reply = client.details.socks_reply
+    # details is a Socks5Result when the proxy answered, None when it
+    # dropped the connection without a reply.
+    reply = client.details.reply if client.details is not None else None
     if reply is not None:  # proxy answered rather than dropping the connection
         assert not reply.succeeded, "proxy reported REP=0x00 for an origin that is not listening"
         assert reply.reply_code in tunnel.SOCKS5_REPLY_MESSAGES, (

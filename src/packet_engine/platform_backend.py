@@ -45,30 +45,41 @@ class SocketBackend(Protocol):
         ...
 
 
-@dataclass
-class WindowsBackend:
-    host_name: str = "Windows"
+@dataclass(frozen=True)
+class ScapyConfBackend:
+    """One backend, parameterised by the single setting that differs.
+
+    Two classes stood here whose `configure()` bodies differed only in the
+    boolean they assigned. The seam itself stays — `NetworkInterface` and
+    `PacketRecorder` both accept a `backend=`, and the self-tests pass a
+    stub through it — but the seam is the Protocol, not the class count.
+    """
+
+    host_name: str
+    use_pcap: bool
 
     def configure(self) -> None:
         from scapy.config import conf
 
-        conf.use_pcap = True  # force Npcap-backed L2 sockets
+        conf.use_pcap = self.use_pcap
 
 
-@dataclass
-class LinuxBackend:
-    host_name: str = "Linux"
-
-    def configure(self) -> None:
-        from scapy.config import conf
-
-        conf.use_pcap = False  # native AF_PACKET, no libpcap dependency required
+# Scapy's `conf` is process-global, so `configure()` is a last-writer-wins
+# assignment. Nothing in the app holds two backends at once (each front end
+# runs one host OS), but that is why these are frozen singletons rather
+# than freshly constructed per call — there is only ever one right answer
+# per host.
+_BACKENDS: dict[str, SocketBackend] = {
+    # Windows: force Npcap-backed L2 sockets.
+    "Windows": ScapyConfBackend("Windows", use_pcap=True),
+    # Linux: native AF_PACKET, no libpcap dependency required.
+    "Linux": ScapyConfBackend("Linux", use_pcap=False),
+}
 
 
 def get_backend() -> SocketBackend:
     system = platform.system()
-    if system == "Windows":
-        return WindowsBackend()
-    if system == "Linux":
-        return LinuxBackend()
-    raise RuntimeError(unsupported_host_message(system))
+    try:
+        return _BACKENDS[system]
+    except KeyError:
+        raise RuntimeError(unsupported_host_message(system)) from None

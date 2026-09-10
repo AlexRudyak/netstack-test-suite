@@ -10,10 +10,11 @@ import html
 from pathlib import Path
 
 from src.reporting import report_data
-from src.reporting.models import OUTCOME_STYLE, TestOutcome, TestRunResult
+from src.reporting.models import TestOutcome, TestRunResult
+from src.reporting.palette import OUTCOME_STYLE
 
 # CSS class per outcome, from the shared presentation table in
-# reporting/models.py — the same table the PDF report and the charts read.
+# reporting/palette.py — the same table the PDF report and the charts read.
 _OUTCOME_CLASS = {outcome: style["css"] for outcome, style in OUTCOME_STYLE.items()}
 
 

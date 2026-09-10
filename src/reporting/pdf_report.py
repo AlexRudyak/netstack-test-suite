@@ -21,10 +21,11 @@ from reportlab.platypus import (
 
 from src.plotting.static_charts import render_packet_timeline, render_pass_fail_summary
 from src.reporting import report_data
-from src.reporting.models import OUTCOME_STYLE, TestRunResult
+from src.reporting.models import TestRunResult
+from src.reporting.palette import OUTCOME_STYLE
 
 # Outcome → (text colour, row background), from the shared presentation
-# table in reporting/models.py.
+# table in reporting/palette.py.
 _OUTCOME_COLORS = {
     outcome: (colors.HexColor(style["fg"]), colors.HexColor(style["bg"]))
     for outcome, style in OUTCOME_STYLE.items()

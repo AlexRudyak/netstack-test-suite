@@ -97,3 +97,20 @@ def test_custom_source_returns_none_when_no_source_given() -> None:
     """None, not an exception — each front end raises its own error type."""
     assert resolve_custom_source() is None
     assert resolve_custom_source(text="", hex_str="", file="") is None
+
+
+def test_every_payload_mode_is_dispatchable() -> None:
+    """The generator table plus CUSTOM must cover the enum exactly.
+
+    A mode added to PayloadMode but not to the table falls through to the
+    "Unhandled" ValueError at send time — the failure this table exists to
+    make impossible to miss.
+    """
+    from src.packet_engine.payloads import _GENERATORS
+
+    assert set(_GENERATORS) | {PayloadMode.CUSTOM} == set(PayloadMode)
+    assert PayloadMode.CUSTOM not in _GENERATORS, (
+        "CUSTOM takes bytes from the caller, not a size-driven generator"
+    )
+    for mode in _GENERATORS:
+        assert len(resolve_payload(mode, size=8)) == 8

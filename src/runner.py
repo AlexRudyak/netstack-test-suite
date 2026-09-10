@@ -44,6 +44,7 @@ from src.reporting.models import (
     TestOutcome,
     TestRunResult,
 )
+from src.run_artifacts import RunArtifacts
 
 POLL_INTERVAL_S = 0.2
 
@@ -97,7 +98,6 @@ class RunRequest:
     payload_size: int = 64
     confirm_vuln_tests: bool = False
     debug: bool = False  # write a tshark-style per-packet debug log for the run
-    role: Role = Role.CLIENT  # which side the suite plays (client/server)
     # Proxy-DUT topology. Setting proxy_mode enables the `proxy`-marked tests
     # (they're skipped otherwise) and requires a backend instance running
     # `netstack-cli proxy-serve` at backend_host:backend_port.
@@ -106,9 +106,25 @@ class RunRequest:
     proxy_port: int | None = None
     backend_host: str | None = None
     backend_port: int | None = None
-    # Aims the ORDINARY endpoint suites at one leg of a proxy DUT
-    # ("front"/"back"). It determines the role, so it overrides `role`.
-    proxy_leg: str | None = None
+
+    # `role` and `proxy_leg` are NOT fields: they are read off `config`,
+    # which already resolved them together via src.config.resolve_role /
+    # resolve_leg_target. Carrying second copies here let the value that
+    # reached the pytest subprocess disagree with the one preflight, the
+    # vuln allow-list check and the reports used — and role decides which
+    # direction traffic is sent at the DUT, so that divergence is the
+    # highest-consequence one available. Set them on the config instead.
+
+    @property
+    def role(self) -> Role:
+        """Which side the suite plays (client/server)."""
+        return self.config.role
+
+    @property
+    def proxy_leg(self) -> str | None:
+        """The proxy leg the ordinary endpoint suites are aimed at
+        ("front"/"back"), as the subprocess flag spells it."""
+        return self.config.proxy_leg.value if self.config.proxy_leg else None
 
 
 TestEventCallback = Callable[[TestEvent], None]
@@ -178,18 +194,19 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
     """The canonical subprocess argument list — also used directly by
     gui/run_controller.py's QProcess invocation, so CLI and GUI runs are
     byte-for-byte the same command."""
+    artifacts = RunArtifacts(run_dir)
     args = [
         *_launcher(),
         *_test_targets(request),
-        f"--report-log={run_dir / 'report_log.jsonl'}",
+        f"--report-log={artifacts.report_log}",
         f"--target-stack={request.config.target_stack}",
         f"--role={request.role.value}",
         f"--dut-ip={request.config.target_ip}",
         f"--dut-iface={request.config.interface}",
         f"--payload-mode={request.payload_mode.value}",
         f"--payload-size={request.payload_size}",
-        f"--live-events-log={run_dir / 'packet_events.jsonl'}",
-        f"--capture-pcap={run_dir / 'capture.pcap'}",
+        f"--live-events-log={artifacts.packet_events}",
+        f"--capture-pcap={artifacts.capture}",
         "-v",
     ]
     args += [f"{flag}={value}" for flag, value in _optional_flags(request) if value is not None]
@@ -208,7 +225,7 @@ def build_pytest_args(request: RunRequest, run_dir: Path) -> list[str]:
     # having authorized the target. conftest's --allowed-targets is append.
     args += [f"--allowed-targets={cidr}" for cidr in request.config.allowed_targets]
     if request.debug:
-        args.append(f"--debug-log={run_dir / 'debug.log'}")
+        args.append(f"--debug-log={artifacts.debug_log}")
 
     # The topology addresses are emitted whenever they're set, not only for
     # --proxy-mode: a front-leg run needs --proxy-host/--proxy-port to know
@@ -249,14 +266,12 @@ def new_run_result(run_id: str, request: RunRequest) -> TestRunResult:
 
 
 def finalize_run(result: TestRunResult, run_dir: Path, returncode: int | None) -> TestRunResult:
-    """Stamp the outcome and persist results.json — the file
+    """Stamp the outcome and persist the run — the file
     reporting/collector.load_run_result() reads back to regenerate a report
-    without re-running the suite."""
+    without re-running the suite. Both sides go through RunArtifacts."""
     result.pytest_returncode = returncode
     result.finished_at = datetime.now(timezone.utc)
-    (run_dir / "results.json").write_text(
-        json.dumps(result.to_dict(), indent=2), encoding="utf-8"
-    )
+    RunArtifacts(run_dir).save(result)
     return result
 
 
@@ -288,8 +303,9 @@ def stream_run(
 
     args = build_pytest_args(request, run_dir)
 
-    report_log = run_dir / "report_log.jsonl"
-    events_log = run_dir / "packet_events.jsonl"
+    artifacts = RunArtifacts(run_dir)
+    report_log = artifacts.report_log
+    events_log = artifacts.packet_events
     report_offset = events_offset = 0
 
     # Redirect the subprocess's stdout/stderr to a file rather than an
@@ -297,7 +313,7 @@ def stream_run(
     # undrained PIPE would fill its OS buffer under -v output and deadlock
     # pytest (it blocks on write while we block on poll). The file keeps the
     # raw output available for debugging without that risk.
-    with (run_dir / "pytest_output.log").open("w", encoding="utf-8") as out:
+    with artifacts.pytest_output.open("w", encoding="utf-8") as out:
         proc = subprocess.Popen(
             args, stdout=out, stderr=subprocess.STDOUT, text=True, cwd=str(paths.project_root())
         )

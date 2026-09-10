@@ -24,6 +24,12 @@ from enum import Enum
 # pytest option defaults so the two instances agree without being told twice.
 DEFAULT_BACKEND_PORT = 9099
 
+# Socket read size for both instances. Not a protocol constant — just the
+# chunk a relay reads in; stated here so the two sides match without the
+# client importing the backend module (and, with it, threading, sockets
+# and EchoBackend) for one integer.
+RECV_CHUNK = 65536
+
 
 class ProxyMode(Enum):
     """How the client instance reaches the origin through the DUT.

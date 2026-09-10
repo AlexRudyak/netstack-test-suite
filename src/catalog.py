@@ -590,6 +590,11 @@ CATALOG: list[TestSpec] = [
 _BY_NODEID: dict[str, TestSpec] = {spec.nodeid: spec for spec in CATALOG}
 _BY_PATH: dict[str, list[TestSpec]] = {}
 _BY_PATH_AND_TEST: dict[tuple[str, str], TestSpec] = {}
+# `<file stem>.py::<test>` — the distinguishing tail of a node id, unique
+# across the catalog (asserted in tests_internal/test_catalog.py). It is
+# what lets find_by_nodeid resolve an absolute or otherwise prefixed node
+# id without scanning every spec.
+_BY_SUFFIX: dict[str, TestSpec] = {f"{spec.file}.py::{spec.test}": spec for spec in CATALOG}
 for _spec in CATALOG:
     _BY_PATH.setdefault(_spec.rel_path, []).append(_spec)
     _BY_PATH_AND_TEST[(_spec.rel_path, _spec.test)] = _spec
@@ -606,8 +611,11 @@ def find_by_nodeid(nodeid: str) -> TestSpec | None:
     exact = _BY_NODEID.get(normalized)
     if exact is not None:
         return exact
-    # Absolute or otherwise prefixed node ids still need the suffix match.
-    return next((spec for spec in CATALOG if normalized.endswith(spec.nodeid)), None)
+    # Absolute or otherwise prefixed node ids: match on the file+test tail.
+    # This was a linear scan over CATALOG, and the caller that matters is
+    # report_data.build_findings — once per failed test, i.e. most often
+    # exactly when the misses are most numerous.
+    return _BY_SUFFIX.get(normalized.rsplit("/", 1)[-1])
 
 
 def find_by_test(rel_path: str, test: str) -> TestSpec | None:

@@ -2,6 +2,7 @@
 verifies valid output structure, no DUT/network required."""
 from __future__ import annotations
 
+from dataclasses import fields
 from datetime import datetime, timezone
 
 import pytest
@@ -36,6 +37,23 @@ def _sample_result() -> TestRunResult:
     )
 
 
+def _sample_result_with_every_field_set() -> TestRunResult:
+    """Every field non-default, so a dropped one changes the serialized form.
+
+    A field left at its default survives a broken round trip by accident —
+    from_dict simply falls back to the same default.
+    """
+    return make_run_result(
+        **{
+            **_sample_result().__dict__,
+            "payload_mode": "zeros",
+            "role": "server",
+            "proxy_leg": "back",
+            "pytest_returncode": 1,
+        }
+    )
+
+
 def test_generate_pdf_report_produces_valid_pdf(tmp_path) -> None:
     output = generate_pdf_report(_sample_result(), tmp_path / "report.pdf")
     assert output.exists()
@@ -53,11 +71,29 @@ def test_generate_html_report_contains_test_rows(tmp_path) -> None:
 
 
 def test_results_json_round_trip() -> None:
-    result = _sample_result()
-    restored = TestRunResult.from_dict(result.to_dict())
+    """Compare the serialized forms, not a handful of named fields.
 
-    assert restored.run_id == result.run_id
-    assert restored.passed == result.passed
-    assert restored.failed == result.failed
-    assert len(restored.tests) == len(result.tests)
-    assert len(restored.packet_events) == len(result.packet_events)
+    This test used to assert five things (run_id, two counts, two lengths),
+    so a field present in to_dict but missing from from_dict — target_stack,
+    payload_mode, role, proxy_leg, pytest_returncode, or a TestEvent's
+    markers/message — was written to results.json and then silently
+    discarded on reload. Naming fields here would always miss the new one.
+    """
+    result = _sample_result_with_every_field_set()
+    assert TestRunResult.from_dict(result.to_dict()).to_dict() == result.to_dict()
+
+
+def test_serialized_form_covers_every_field() -> None:
+    """Catches the other half: a field missing from *both* directions.
+
+    The round-trip above is symmetric, so a field neither serializer knows
+    about round-trips perfectly by being absent from both sides.
+    """
+    serialized = _sample_result_with_every_field_set().to_dict()
+    assert set(serialized) == {f.name for f in fields(TestRunResult)}
+
+    event = TestEvent(nodeid="t", outcome=TestOutcome.PASSED, duration_s=0.0)
+    assert set(event.to_dict()) == {f.name for f in fields(TestEvent)}
+
+    packet = PacketEvent(timestamp=0.0, direction=PacketDirection.SENT, summary="s", size_bytes=1)
+    assert set(packet.to_dict()) == {f.name for f in fields(PacketEvent)}

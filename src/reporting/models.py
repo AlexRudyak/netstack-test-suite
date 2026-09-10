@@ -7,7 +7,7 @@ truth avoids each consumer re-deriving its own notion of "what happened."
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from enum import Enum
 from typing import Any, ClassVar
@@ -35,6 +35,10 @@ class PacketEvent:
         d["direction"] = self.direction.value
         return d
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PacketEvent":
+        return cls(**{**data, "direction": PacketDirection(data["direction"])})
+
 
 class TestOutcome(Enum):
     __test__ = False
@@ -44,24 +48,9 @@ class TestOutcome(Enum):
     ERROR = "error"
 
 
-# How each outcome is presented, in one table. Every renderer reads its own
-# column here rather than re-typing the palette: the HTML report's CSS class
-# and hex values, the PDF's text/background colours, the matplotlib bar
-# colour, and the GUI log panel's short label.
-OUTCOME_STYLE: dict[TestOutcome, dict[str, str]] = {
-    TestOutcome.PASSED: {
-        "css": "passed", "fg": "#1a7f37", "bg": "#e8f5e9", "mpl": "tab:green", "prefix": "PASS",
-    },
-    TestOutcome.FAILED: {
-        "css": "failed", "fg": "#b71c1c", "bg": "#ffebee", "mpl": "tab:red", "prefix": "FAIL",
-    },
-    TestOutcome.ERROR: {
-        "css": "error", "fg": "#8a1a9b", "bg": "#f3e5f5", "mpl": "tab:purple", "prefix": "ERR",
-    },
-    TestOutcome.SKIPPED: {
-        "css": "skipped", "fg": "#616161", "bg": "#f5f5f5", "mpl": "tab:gray", "prefix": "SKIP",
-    },
-}
+# How each outcome is *presented* lives in reporting/palette.py, not here:
+# this module is imported by the runner, the collector, the packet
+# interface and every GUI panel, none of which render a report.
 
 
 @dataclass
@@ -79,11 +68,27 @@ class TestEvent:
         d["outcome"] = self.outcome.value
         return d
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TestEvent":
+        known = {f.name for f in fields(cls)}
+        return cls(**{**{k: v for k, v in data.items() if k in known},
+                      "outcome": TestOutcome(data["outcome"])})
+
     def summary_line(self, label_width: int = 7) -> str:
         """One console/log line for this test. Shared by the CLI's progress
         output and the GUI log panel so a run reads the same in both."""
         line = f"[{self.outcome.value.upper():{label_width}}] {self.nodeid} ({self.duration_s:.3f}s)"
         return f"{line} — {self.message}" if self.message else line
+
+
+# Serialization is derived from `fields()` rather than written out
+# field-by-field: the field list used to be stated three times (the
+# dataclass body, to_dict, from_dict), and a field added to one but not the
+# others was dropped in silence — never persisted, or written and then
+# discarded on reload. These two tables name the only fields that are not
+# plain JSON scalars, so a new scalar field needs no serializer edit.
+_DATETIME_FIELDS = ("started_at", "finished_at")
+_NESTED_FIELDS: dict[str, type] = {"tests": TestEvent, "packet_events": PacketEvent}
 
 
 @dataclass
@@ -166,52 +171,30 @@ class TestRunResult:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "run_id": self.run_id,
-            "started_at": self.started_at.isoformat(),
-            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
-            "target_ip": self.target_ip,
-            "target_stack": self.target_stack,
-            "host_platform": self.host_platform,
-            "payload_mode": self.payload_mode,
-            "role": self.role,
-            "proxy_leg": self.proxy_leg,
-            "pytest_returncode": self.pytest_returncode,
-            "tests": [t.to_dict() for t in self.tests],
-            "packet_events": [p.to_dict() for p in self.packet_events],
-        }
+        out: dict[str, Any] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.name in _DATETIME_FIELDS:
+                out[f.name] = value.isoformat() if value else None
+            elif f.name in _NESTED_FIELDS:
+                out[f.name] = [item.to_dict() for item in value]
+            else:
+                out[f.name] = value
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TestRunResult":
-        return cls(
-            run_id=data["run_id"],
-            started_at=datetime.fromisoformat(data["started_at"]),
-            finished_at=datetime.fromisoformat(data["finished_at"]) if data.get("finished_at") else None,
-            target_ip=data["target_ip"],
-            target_stack=data["target_stack"],
-            host_platform=data["host_platform"],
-            payload_mode=data.get("payload_mode", "random"),
-            role=data.get("role", "client"),
-            proxy_leg=data.get("proxy_leg"),
-            pytest_returncode=data.get("pytest_returncode"),
-            tests=[
-                TestEvent(
-                    nodeid=t["nodeid"],
-                    outcome=TestOutcome(t["outcome"]),
-                    duration_s=t["duration_s"],
-                    markers=t.get("markers", []),
-                    message=t.get("message"),
-                )
-                for t in data.get("tests", [])
-            ],
-            packet_events=[
-                PacketEvent(
-                    timestamp=p["timestamp"],
-                    direction=PacketDirection(p["direction"]),
-                    summary=p["summary"],
-                    size_bytes=p["size_bytes"],
-                    test_nodeid=p.get("test_nodeid"),
-                )
-                for p in data.get("packet_events", [])
-            ],
-        )
+        kwargs: dict[str, Any] = {}
+        for f in fields(cls):
+            if f.name in _DATETIME_FIELDS:
+                raw = data.get(f.name)
+                kwargs[f.name] = datetime.fromisoformat(raw) if raw else None
+            elif f.name in _NESTED_FIELDS:
+                kwargs[f.name] = [
+                    _NESTED_FIELDS[f.name].from_dict(d) for d in data.get(f.name, [])
+                ]
+            elif f.name in data:
+                # Absent keys fall through to the dataclass default, which
+                # is what lets an older results.json still load.
+                kwargs[f.name] = data[f.name]
+        return cls(**kwargs)

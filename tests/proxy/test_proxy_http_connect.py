@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.proxy]
 def test_connect_request_establishes_tunnel_with_2xx(http_connect_config) -> None:
     """RFC 9110 §9.3.6: a 2xx response to CONNECT establishes the tunnel."""
     with ProxyClient(http_connect_config) as client:
-        response = client.details.http_response
+        response = client.details  # an HttpConnectResponse under this mode
         assert response is not None, "no CONNECT response was captured"
         assert response.tunnel_established, (
             f"proxy answered CONNECT with {response.status} {response.reason} — "
@@ -35,7 +35,7 @@ def test_2xx_connect_response_omits_framing_headers(http_connect_config) -> None
     Transfer-Encoding in a 2xx response to CONNECT — the tunnel has no
     message body, and framing headers would desynchronise the stream."""
     with ProxyClient(http_connect_config) as client:
-        response = client.details.http_response
+        response = client.details
         assert response is not None
         assert "content-length" not in response.headers, (
             "2xx CONNECT response carried Content-Length (forbidden by RFC 9110 §9.3.6)"
@@ -63,7 +63,7 @@ def test_connect_to_unreachable_origin_is_not_reported_as_success(
         client.close()
 
     if isinstance(exc_info.value, ProxyTunnelError):
-        response = client.details.http_response
+        response = client.details
         assert response is not None and not response.tunnel_established
         assert response.status >= 400, (
             f"proxy reported an unreachable origin with status {response.status}; "

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.custom_packet.builder import CustomPacketSpec
+from src.custom_packet.builder import CustomPacketSpec, Proto
 from src.custom_packet.sender import send_custom_packet
 from src.packet_engine.payloads import PayloadMode, resolve_custom_source
 
@@ -33,7 +33,8 @@ class CustomPacketPanel(QWidget):
         super().__init__(parent)
 
         self._proto = QComboBox()
-        self._proto.addItems(["tcp", "udp"])
+        for proto in Proto:
+            self._proto.addItem(proto.value, userData=proto)
         self._iface = QLineEdit()
         self._src_ip = QLineEdit()
         self._dst_ip = QLineEdit()
@@ -168,7 +169,7 @@ class CustomPacketPanel(QWidget):
             custom = self._resolve_custom_payload() if mode is PayloadMode.CUSTOM else None
 
             spec = CustomPacketSpec(
-                proto=self._proto.currentText(),
+                proto=self._proto.currentData(),
                 src_ip=self._src_ip.text(),
                 dst_ip=self._dst_ip.text(),
                 src_port=self._src_port.value(),

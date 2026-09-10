@@ -8,6 +8,8 @@ each of those, plus the pass-through from RunRequest to the subprocess.
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -34,16 +36,31 @@ def test_leg_implies_the_role_it_can_only_have() -> None:
     assert ProxyLeg.BACK.implied_role is Role.SERVER
 
 
-def test_leg_survives_config_round_trip(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    _config(proxy_leg=ProxyLeg.BACK).to_file(path)
-    assert DUTConfig.from_file(path).proxy_leg is ProxyLeg.BACK
+def test_leg_survives_config_round_trip() -> None:
+    """Through JSON, since that is what a persisted config would be."""
+    encoded = json.dumps(_config(proxy_leg=ProxyLeg.BACK).to_dict())
+    assert DUTConfig.from_dict(json.loads(encoded)).proxy_leg is ProxyLeg.BACK
 
 
-def test_absent_leg_round_trips_as_none(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    _config().to_file(path)
-    assert DUTConfig.from_file(path).proxy_leg is None
+def test_absent_leg_round_trips_as_none() -> None:
+    encoded = json.dumps(_config().to_dict())
+    assert DUTConfig.from_dict(json.loads(encoded)).proxy_leg is None
+
+
+def test_config_round_trip_covers_every_field() -> None:
+    """A field dropped from to_dict/from_dict is silent otherwise."""
+    config = _config(
+        target_mac="aa:bb:cc:dd:ee:ff",
+        target_port=8080,
+        source_port=41000,
+        timeout=9.5,
+        retries=7,
+        role=Role.SERVER,
+        proxy_leg=ProxyLeg.FRONT,
+        allowed_targets=("10.0.0.0/24",),
+    )
+    assert set(config.to_dict()) == {f.name for f in dataclasses.fields(DUTConfig)}
+    assert DUTConfig.from_dict(config.to_dict()) == config
 
 
 # --- runner pass-through ---------------------------------------------------
@@ -53,8 +70,7 @@ def test_leg_and_front_address_reach_the_subprocess(tmp_path: Path) -> None:
     """A front-leg run needs the proxy address even with no proxy-marked
     tests selected — that's what the ordinary suites retarget to."""
     request = RunRequest(
-        config=_config(),
-        proxy_leg="front",
+        config=_config(proxy_leg=ProxyLeg.FRONT),
         proxy_host="10.0.0.5",
         proxy_port=1080,
     )
@@ -228,3 +244,21 @@ def test_inducer_drives_real_connections_through_a_stub_proxy() -> None:
         assert backend.stats.tcp_connections >= 3
     finally:
         backend.stop()
+
+
+def test_request_cannot_disagree_with_its_config_about_role_or_leg() -> None:
+    """RunRequest reads role/proxy_leg off its config rather than copying
+    them. Copies let the value reaching the pytest subprocess diverge from
+    the one preflight and the vuln allow-list check saw — and role decides
+    which direction traffic is sent at the DUT.
+    """
+    fields = {f.name for f in dataclasses.fields(RunRequest)}
+    assert "role" not in fields and "proxy_leg" not in fields, (
+        "RunRequest grew a role/proxy_leg field again — they belong to "
+        "DUTConfig, which resolves them together (src.config.resolve_role)."
+    )
+
+    config = _config(proxy_leg=ProxyLeg.BACK, role=Role.SERVER)
+    request = RunRequest(config=config)
+    assert request.role is config.role
+    assert request.proxy_leg == ProxyLeg.BACK.value

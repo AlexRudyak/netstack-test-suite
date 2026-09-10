@@ -12,6 +12,7 @@ IP/TCP/UDP packet built by builders.py — it has no L7 protocol awareness
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
@@ -72,6 +73,19 @@ def resolve_custom_source(
     return None
 
 
+# The size-driven modes, as a table. The three generators already share a
+# one-argument signature, so the branch structure they used to sit behind
+# was pure ceremony: a new mode meant editing the enum *and* the chain.
+#
+# CUSTOM is deliberately absent — its bytes come from the caller, not from
+# a generator over `size`.
+_GENERATORS: dict[PayloadMode, Callable[[int], bytes]] = {
+    PayloadMode.ZEROS: zeros,
+    PayloadMode.ONES: ones,
+    PayloadMode.RANDOM: random_bytes,
+}
+
+
 def resolve_payload(
     mode: PayloadMode,
     size: int = 0,
@@ -83,14 +97,11 @@ def resolve_payload(
     must already be resolved by the caller (from text/hex/file — that
     resolution is a CLI/GUI input-parsing concern, not this function's).
     """
-    if mode is PayloadMode.ZEROS:
-        return zeros(size)
-    if mode is PayloadMode.ONES:
-        return ones(size)
-    if mode is PayloadMode.RANDOM:
-        return random_bytes(size)
     if mode is PayloadMode.CUSTOM:
         if custom is None:
             raise ValueError("PayloadMode.CUSTOM requires `custom` bytes")
         return custom
-    raise ValueError(f"Unhandled PayloadMode: {mode!r}")
+    try:
+        return _GENERATORS[mode](size)
+    except KeyError:
+        raise ValueError(f"Unhandled PayloadMode: {mode!r}") from None

@@ -54,7 +54,6 @@ def test_config_round_trip_covers_every_field() -> None:
         target_port=8080,
         source_port=41000,
         timeout=9.5,
-        retries=7,
         role=Role.SERVER,
         proxy_leg=ProxyLeg.FRONT,
         allowed_targets=("10.0.0.0/24",),

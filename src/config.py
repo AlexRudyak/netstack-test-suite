@@ -162,7 +162,13 @@ class DUTConfig:
     # (the historical behavior: per-test counters / hardcoded ports).
     source_port: int | None = None
     timeout: float = 2.0
-    retries: int = 2
+    # There is deliberately no `retries` field. A conformance suite that
+    # silently retries hides the defect it exists to find: a DUT that answers
+    # the second probe but not the first has a bug, and a retry would report
+    # it as a pass. The tests that legitimately repeat (the congestion and
+    # flood suites) loop explicitly, where the count is part of the
+    # assertion. One was declared here for a long time and never read by any
+    # production code, which told every reader of this object the opposite.
     role: Role = Role.CLIENT
     # Set when the target is one leg of a proxy DUT rather than an endpoint.
     # Purely descriptive here — the addressing is already resolved into

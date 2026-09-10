@@ -25,6 +25,12 @@ from src.proxy.config import ProxyConfig
 DEFAULT_INTERVAL_S = 0.25
 DEFAULT_PAYLOAD = b"netstack-induce"
 
+# Consecutive failures after which the loop starts backing off, and the
+# ceiling it backs off to. Ten at the default interval is ~2.5s of trying
+# before conceding that the far side is not merely busy.
+_BACKOFF_AFTER_FAILURES = 10
+_MAX_BACKOFF_S = 5.0
+
 
 class TrafficInducer:
     """Repeatedly drives connections through the proxy in a background thread."""
@@ -45,6 +51,10 @@ class TrafficInducer:
         self._attempts = 0
         self._successes = 0
         self._last_error: str | None = None
+        # Tallied by exception type. Keeping only the last error meant a run
+        # that failed identically thousands of times reported one string, and
+        # a transient refusal looked the same as a permanent misconfiguration.
+        self._error_counts: dict[str, int] = {}
 
     @property
     def attempts(self) -> int:
@@ -82,6 +92,7 @@ class TrafficInducer:
         self.stop()
 
     def _loop(self) -> None:
+        consecutive_failures = 0
         while not self._stop.is_set():
             with self._lock:
                 self._attempts += 1
@@ -89,16 +100,32 @@ class TrafficInducer:
                 with ProxyClient(self.config) as client:
                     client.roundtrip(self.payload)
             except Exception as exc:  # refusal/timeout is a DUT result, not our error
+                consecutive_failures += 1
                 with self._lock:
                     self._last_error = f"{type(exc).__name__}: {exc}"
+                    name = type(exc).__name__
+                    self._error_counts[name] = self._error_counts.get(name, 0) + 1
+                # Back off once it is plainly not transient. The handler
+                # cannot tell a refusal from an unresolvable backend host, and
+                # at 4Hz the latter burns a whole session's worth of connect
+                # attempts against something that will never answer.
+                if consecutive_failures >= _BACKOFF_AFTER_FAILURES:
+                    self._stop.wait(min(self.interval * consecutive_failures, _MAX_BACKOFF_S))
             else:
+                consecutive_failures = 0
                 with self._lock:
                     self._successes += 1
             self._stop.wait(self.interval)
 
     def summary(self) -> str:
+        """One line at teardown. When nothing was induced, every server-role
+        timeout in the run has this same root cause — so the breakdown by
+        exception type is what tells the operator which one."""
         with self._lock:
             text = f"induced {self._successes}/{self._attempts} connections through the proxy"
-            if self._last_error:
-                text += f" (last error: {self._last_error})"
+            if self._error_counts:
+                breakdown = ", ".join(
+                    f"{name}x{count}" for name, count in sorted(self._error_counts.items())
+                )
+                text += f" (failures: {breakdown}; last: {self._last_error})"
             return text

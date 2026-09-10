@@ -232,14 +232,14 @@ def test_client_half_close_propagates_to_eof(backend, mode: ProxyMode) -> None:
 def test_tunnel_details_expose_rfc_fields(backend) -> None:
     with StubProxy(ProxyMode.SOCKS5) as proxy:
         with ProxyClient(_config(backend, ProxyMode.SOCKS5, proxy.port)) as client:
-            assert client.details.socks_method == tunnel.AUTH_NONE
-            assert client.details.socks_reply is not None
-            assert client.details.socks_reply.succeeded
+            assert client.details.method == tunnel.AUTH_NONE
+            assert client.details.reply is not None
+            assert client.details.reply.succeeded
 
     with StubProxy(ProxyMode.HTTP_CONNECT) as proxy:
         with ProxyClient(_config(backend, ProxyMode.HTTP_CONNECT, proxy.port)) as client:
-            assert client.details.http_response is not None
-            assert client.details.http_response.status == 200
+            assert client.details is not None
+            assert client.details.status == 200
 
 
 # --- refusal paths ----------------------------------------------------------
@@ -260,3 +260,30 @@ def test_http_connect_refusal_raises_with_status(backend) -> None:
 def test_explicit_mode_requires_a_front_address(backend) -> None:
     with pytest.raises(ValueError, match="explicit proxy mode"):
         ProxyConfig(mode=ProxyMode.SOCKS5, backend_host=LOOPBACK, backend_port=1)
+
+
+def test_a_handshake_exists_for_every_proxy_mode() -> None:
+    """The strategy table must cover ProxyMode exactly.
+
+    A mode added to the enum but not here raises KeyError at connect time —
+    after the socket is open, against a real DUT.
+    """
+    from src.proxy import handshakes
+
+    assert set(handshakes._BUILDERS) == set(ProxyMode)
+
+
+def test_every_mode_builds_a_handshake_that_can_establish(backend) -> None:
+    from src.proxy import handshakes
+
+    for mode in ProxyMode:
+        handshake = handshakes.for_config(_config(backend, mode, backend.bound_port))
+        assert callable(getattr(handshake, "establish", None)), mode
+
+
+def test_transparent_mode_reports_no_tunnel_details(backend) -> None:
+    """There is no in-band negotiation to report, so `details` is None
+    rather than a record of three empty optionals."""
+    with ProxyClient(_config(backend, ProxyMode.TRANSPARENT, backend.bound_port)) as client:
+        assert client.details is None
+        assert client.roundtrip(b"inline") == b"inline"

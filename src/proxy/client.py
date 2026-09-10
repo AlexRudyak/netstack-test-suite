@@ -5,6 +5,9 @@ performing whichever in-band handshake the mode requires, then exposes the
 relay operations the tests assert on: byte-fidelity round-trips and
 half-close propagation.
 
+The handshakes themselves live in `handshakes.py`, one strategy per mode,
+so this class is only the socket lifecycle and the relay operations.
+
 Uses ordinary OS sockets for the same reason as `backend.py`: the DUT
 terminates TCP on both legs, so what matters here is being a correct peer
 and checking what comes back — not crafting packets.
@@ -12,24 +15,13 @@ and checking what comes back — not crafting packets.
 from __future__ import annotations
 
 import socket
-from dataclasses import dataclass
 
-from src.proxy import tunnel
-from src.proxy.config import RECV_CHUNK, ProxyConfig, ProxyMode
+from src.proxy import handshakes
+from src.proxy.config import RECV_CHUNK, ProxyConfig
 
-
-class ProxyTunnelError(RuntimeError):
-    """The DUT refused or mishandled the tunnel-establishment handshake."""
-
-
-@dataclass
-class TunnelDetails:
-    """What the DUT reported while establishing the tunnel — kept so tests
-    can assert on the RFC-specified fields rather than just success."""
-
-    http_response: tunnel.HttpConnectResponse | None = None
-    socks_method: int | None = None
-    socks_reply: tunnel.Socks5Reply | None = None
+# Re-exported: every caller reaches for it as src.proxy.client.ProxyTunnelError,
+# and it is raised by the handshakes this module drives.
+ProxyTunnelError = handshakes.ProxyTunnelError
 
 
 class ProxyClient:
@@ -37,7 +29,11 @@ class ProxyClient:
 
     def __init__(self, config: ProxyConfig) -> None:
         self.config = config
-        self.details = TunnelDetails()
+        # What the DUT reported while establishing the tunnel, typed by the
+        # mode's handshake: None (transparent), an HttpConnectResponse, or a
+        # Socks5Result. Populated on failure too, from the raised error, so
+        # the "refused correctly" assertions have something to read.
+        self.details: object = None
         self._sock: socket.socket | None = None
 
     # --- connection lifecycle ----------------------------------------------
@@ -46,10 +42,14 @@ class ProxyClient:
         host, port = self.config.dial_target
         self._sock = socket.create_connection((host, port), timeout=self.config.timeout)
         self._sock.settimeout(self.config.timeout)
-        if self.config.mode is ProxyMode.HTTP_CONNECT:
-            self._http_connect()
-        elif self.config.mode is ProxyMode.SOCKS5:
-            self._socks5_connect()
+        handshake = handshakes.for_config(self.config)
+        try:
+            self.details = handshake.establish(
+                self._sock, self._recv_exact, self.config.origin
+            )
+        except ProxyTunnelError as exc:
+            self.details = exc.details
+            raise
         return self
 
     def close(self) -> None:
@@ -70,57 +70,6 @@ class ProxyClient:
         if self._sock is None:
             raise RuntimeError("ProxyClient is not connected; call connect() first")
         return self._sock
-
-    # --- handshakes ---------------------------------------------------------
-
-    def _http_connect(self) -> None:
-        """RFC 9110 §9.3.6 / RFC 9112 CONNECT tunnel."""
-        host, port = self.config.origin
-        self.socket.sendall(tunnel.build_http_connect_request(host, port))
-        raw = tunnel.read_http_response_head(self._recv_exact)
-        response = tunnel.parse_http_connect_response(raw)
-        self.details.http_response = response
-        if not response.tunnel_established:
-            raise ProxyTunnelError(
-                f"CONNECT {tunnel.format_authority(host, port)} was refused: "
-                f"{response.status} {response.reason}".strip()
-            )
-
-    def _socks5_connect(self) -> None:
-        """RFC 1928 greeting → method selection → CONNECT → reply."""
-        methods = [tunnel.AUTH_NONE]
-        if self.config.username is not None:
-            methods.append(tunnel.AUTH_USERNAME_PASSWORD)
-        self.socket.sendall(tunnel.build_socks5_greeting(methods))
-
-        method = tunnel.parse_socks5_method_selection(self._recv_exact(2))
-        self.details.socks_method = method
-        if method == tunnel.AUTH_NO_ACCEPTABLE:
-            raise ProxyTunnelError(
-                "SOCKS5 proxy rejected every offered authentication method (0xFF)"
-            )
-        if method == tunnel.AUTH_USERNAME_PASSWORD:
-            if self.config.username is None or self.config.password is None:
-                raise ProxyTunnelError(
-                    "SOCKS5 proxy selected username/password auth but no credentials were configured"
-                )
-            self.socket.sendall(
-                tunnel.build_socks5_userpass_auth(self.config.username, self.config.password)
-            )
-            if not tunnel.parse_socks5_userpass_result(self._recv_exact(2)):
-                raise ProxyTunnelError("SOCKS5 username/password authentication failed (RFC 1929)")
-        elif method != tunnel.AUTH_NONE:
-            raise ProxyTunnelError(f"SOCKS5 proxy selected unsupported method 0x{method:02x}")
-
-        host, port = self.config.origin
-        self.socket.sendall(tunnel.build_socks5_request(host, port, tunnel.CMD_CONNECT))
-        reply = tunnel.read_socks5_reply(self._recv_exact)
-        self.details.socks_reply = reply
-        if not reply.succeeded:
-            raise ProxyTunnelError(
-                f"SOCKS5 CONNECT to {host}:{port} failed: "
-                f"0x{reply.reply_code:02x} ({reply.message})"
-            )
 
     # --- relay operations ---------------------------------------------------
 

@@ -9,6 +9,7 @@ both front ends use).
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import sys
 import time
@@ -87,6 +88,22 @@ class NetstackCLI(click.Group):
 def cli() -> None:
     """Network Stack Test Suite — RFC conformance & vulnerability testing over Ethernet."""
     configure_logging()
+
+
+def _validate_cidrs(ctx, param, value: tuple[str, ...]) -> tuple[str, ...]:
+    """Reject a malformed CIDR at parse time.
+
+    The allow-list is only read once a `vuln`-marked test is about to run,
+    which on a long suite is many minutes in — so a typo here used to abort
+    the run at the worst possible moment. Click reports it before anything
+    starts.
+    """
+    for cidr in value:
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError as exc:
+            raise click.BadParameter(f"{cidr!r} is not a valid CIDR range: {exc}") from exc
+    return value
 
 
 def _resolve_topology(
@@ -190,7 +207,13 @@ def _emit_results(result, run_dir: Path, *, report: str, debug: bool) -> int:
 @click.option("--dut-ip", required=True)
 @click.option("--target-stack", type=click.Choice(list_profiles()), required=True)
 @shared_click_options(SHARED_OPTIONS)
-@click.option("--allowed-target", "allowed_targets", multiple=True, help="CIDR authorized for vuln-marked tests.")
+@click.option(
+    "--allowed-target",
+    "allowed_targets",
+    multiple=True,
+    callback=_validate_cidrs,
+    help="CIDR authorized for vuln-marked tests.",
+)
 @click.option("--confirm-vuln-tests", is_flag=True, default=False)
 @click.option(
     "--debug",

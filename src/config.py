@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from typing import ClassVar, Literal
 
+from src.errors import ConfigurationError
+
 # The profile names src/target_profiles/ ships. Kept as a Literal for type
 # checking; `target_profiles.list_profiles()` is the runtime source both
 # front ends build their choice lists from, so the two can't drift.
@@ -192,13 +194,35 @@ class DUTConfig:
         ]
 
     def target_in_allowed_range(self) -> bool:
+        """Whether the target falls inside any authorized CIDR.
+
+        Both parses raise ConfigurationError rather than the bare ValueError
+        ipaddress produces. `--dut-ip` and `--allowed-target` are free text,
+        so a typo is ordinary operator input — and the only caller is the
+        vuln safety gate, where an unhandled ValueError made every
+        `vuln`-marked test ERROR with a message about network syntax instead
+        of naming the flag to fix. It fails closed either way; this decides
+        what the operator is told.
+        """
         if not self.allowed_targets:
             return False
-        addr = ipaddress.ip_address(self.target_ip)
-        return any(
-            addr in ipaddress.ip_network(cidr, strict=False)
-            for cidr in self.allowed_targets
-        )
+        try:
+            addr = ipaddress.ip_address(self.target_ip)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Target {self.target_ip!r} is not an IP address, so it cannot be "
+                "checked against the vuln-test allow-list."
+            ) from exc
+        for cidr in self.allowed_targets:
+            try:
+                network = ipaddress.ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ConfigurationError(
+                    f"Allowed target {cidr!r} is not a valid CIDR range: {exc}"
+                ) from exc
+            if addr in network:
+                return True
+        return False
 
     # --- serialization ------------------------------------------------------
     # Derived from `fields()` rather than written out field-by-field: the

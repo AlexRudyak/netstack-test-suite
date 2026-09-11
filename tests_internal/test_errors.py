@@ -105,3 +105,51 @@ def test_proxy_tunnel_error_still_carries_details() -> None:
 
     assert exc.details is reply
     assert errors.ProxyTunnelError("nothing reported").details is None
+
+
+def test_an_unknown_target_stack_is_a_netstack_error() -> None:
+    """The lookup failures have to reach the boundary like everything else.
+
+    `platform_backend.get_backend` already raised UnsupportedHostError;
+    `get_profile` still raised a bare ValueError, which the CLI boundary
+    deliberately does not catch — so it printed a traceback instead of
+    naming the flag and listing the valid values.
+    """
+    from src.target_profiles import get_profile, list_profiles
+
+    with pytest.raises(errors.ConfigurationError) as caught:
+        get_profile("linuxx")
+
+    assert isinstance(caught.value, errors.NetstackError)
+    for name in list_profiles():
+        assert name in str(caught.value), "the message does not list the valid options"
+
+
+def test_known_target_stacks_still_resolve_case_insensitively() -> None:
+    from src.target_profiles import get_profile
+
+    assert get_profile("LINUX").name == "linux"
+    assert get_profile("windows").name == "windows"
+
+
+def test_a_peer_that_hangs_up_is_both_a_violation_and_a_connection_error() -> None:
+    """The dual base is the point: existing handlers catch ConnectionError,
+    while tests/proxy/ can now claim a truncated reply as a DUT verdict
+    rather than something that might equally be a local socket problem."""
+    exc = errors.PeerClosedEarly("proxy closed before the SOCKS5 domain length byte")
+
+    assert isinstance(exc, ConnectionError)  # what the existing handlers catch
+    assert isinstance(exc, errors.ProtocolViolation)  # the DUT said something wrong
+    assert isinstance(exc, errors.NetstackError)
+
+
+def test_render_names_the_type_and_is_shared_by_every_boundary() -> None:
+    """Six surfaces had each invented their own format, and only two named
+    the type — so the same failure read differently depending on which one
+    caught it."""
+    rendered = errors.ConfigurationError("payload hex is not valid hex").render()
+
+    assert rendered == "Error: [ConfigurationError] payload hex is not valid hex"
+    assert errors.UnauthorizedTargetError("out of range").render(prefix="Blocked").startswith(
+        "Blocked: [UnauthorizedTargetError]"
+    )

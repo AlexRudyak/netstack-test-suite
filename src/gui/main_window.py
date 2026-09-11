@@ -32,6 +32,7 @@ from src.config import (
     resolve_leg_target,
     resolve_role,
 )
+from src.errors import ConfigurationError
 from src.gui.custom_packet_panel import CustomPacketPanel
 from src.gui.log_panel import LogPanel
 from src.gui.proxy_panel import ProxyBackendPanel
@@ -63,12 +64,17 @@ class MainWindow(QMainWindow):
         # Set when the runner process failed to launch, so the generic
         # "no tests ran" line doesn't follow the specific reason.
         self._launch_failed = False
+        # Set when the operator pressed Stop, so a partial run is reported as
+        # stopped rather than as "no tests ran".
+        self._stopped = False
         self._controller = RunController(self)
         self._controller.test_event.connect(self._on_test_event)
         self._controller.packet_event.connect(self._on_packet_event)
         self._controller.output_line.connect(self._on_output_line)
         self._controller.finished.connect(self._on_finished)
         self._controller.failed.connect(self._on_launch_failed)
+        self._controller.save_failed.connect(self._on_save_failed)
+        self._controller.stopped.connect(self._on_stopped)
 
         self._build_ui()
 
@@ -260,20 +266,29 @@ class MainWindow(QMainWindow):
         self._plot.reset()
         self._log_panel.clear_log()
         self._launch_failed = False
+        self._stopped = False
         # Surface progress/errors as text — the Log tab is where the run
         # actually reports what happened (a blank Live plot was exactly why
         # a failed run looked like "nothing happened").
         self._right_tabs.setCurrentWidget(self._log_panel)
 
-        config = self._current_dut_config()
-        if not self._report_topology(config):
+        try:
+            config = self._current_dut_config()
+            if not self._report_topology(config):
+                return
+
+            if not self._preflight_and_report(config):
+                return
+            self._warn_role_mismatches(config)
+
+            request = self._build_run_request(config)
+        except ConfigurationError as exc:
+            # A malformed field, reported where the operator is looking
+            # instead of silently becoming an unset value. This is also a
+            # `clicked` slot, so an escape here would end the process.
+            self._log_panel.append_line(f"{exc.render()} Not starting the run.")
             return
 
-        if not self._preflight_and_report(config):
-            return
-        self._warn_role_mismatches(config)
-
-        request = self._build_run_request(config)
         selection = ", ".join(request.targets) if request.targets else "all tests"
         self._log_panel.append_line(f"Starting run (role={config.role.value}, selection: {selection})…")
         if request.proxy_mode:
@@ -376,16 +391,35 @@ class MainWindow(QMainWindow):
         a QProcess that fails to start emits no `finished`."""
         self._launch_failed = True
         self._log_panel.append_line(message)
+        self._log_panel.append_line("No tests were run.")
+
+    def _on_save_failed(self, message: str) -> None:
+        """The run finished but its results could not be written to disk.
+
+        Distinct from a launch failure: the verdict below is real, and the
+        panels still show it — what is gone is the saved copy this run could
+        have been re-reported from without touching the DUT again.
+        """
+        self._log_panel.append_line(message)
         self._log_panel.append_line(
-            "No tests were run. Check that the Python interpreter and the test "
-            "tree are reachable from the project directory."
+            "The results below are from this session only — export a report now "
+            "if you need to keep them."
         )
+
+    def _on_stopped(self) -> None:
+        """The run ended because it was killed, not because pytest chose to."""
+        self._stopped = True
 
     def _on_finished(self, result: TestRunResult) -> None:
         self._report_panel.set_result(result)
         if self._launch_failed:
             return  # _on_launch_failed already said what went wrong
-        if result.errored:
+        if self._stopped:
+            self._log_panel.append_line(
+                f"Run stopped — {result.counts_summary} before the stop. "
+                "The tests that did not run are not failures."
+            )
+        elif result.errored:
             self._log_panel.append_line(
                 f"pytest exited with code {result.pytest_returncode} "
                 f"(collection/usage error or no tests) — see "
@@ -407,7 +441,16 @@ class MainWindow(QMainWindow):
 def _split_host_port(text: str) -> tuple[str | None, int | None]:
     """Parse a `host:port` field, tolerating IPv6 literals in brackets.
 
-    Returns (None, None) for an empty field so the option is simply omitted.
+    Returns (None, None) for an empty field, and a port of None when the
+    field carries no port at all, so the option is simply omitted.
+
+    A port that is *present but unparseable* raises instead of degrading to
+    None. None means "unset" everywhere else in this codebase — it is why
+    runner._optional_flags omits the flag entirely, and why that function
+    forwards a port of 0 rather than substitute a different one — so a typo
+    here silently ran against the default backend port, or, on a front leg,
+    against a random ephemeral port instead of the proxy. The only hint the
+    operator got was a dash in one log line.
     """
     value = text.strip()
     if not value:
@@ -420,10 +463,14 @@ def _split_host_port(text: str) -> tuple[str | None, int | None]:
         host, _, port = value.rpartition(":")
         if not host:  # no colon at all — treat the whole field as the host
             return value, None
-    try:
-        return host, int(port)
-    except ValueError:
+    if not port:  # "10.0.0.5:" or a bare "[::1]" — a host, no port
         return host or None, None
+    try:
+        return host or None, int(port)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{value!r} is not a valid host:port — {port!r} is not a port number."
+        ) from exc
 
 
 def _list_interface_names() -> list[str]:

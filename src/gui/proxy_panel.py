@@ -123,8 +123,17 @@ class ProxyBackendPanel(QWidget):
         self._stop_button.setEnabled(False)
 
     def _refresh_stats(self) -> None:
-        if self._backend is not None:
-            self._stats.setText(self._backend.stats.summary())
+        if self._backend is None:
+            return
+        self._stats.setText(self._backend.stats.summary())
+        if not self._backend.is_serving:
+            # Holding a reference is not the same as still accepting: the
+            # serving threads can end on an OSError that stop() did not
+            # cause, and this label was the operator's only indication.
+            self._status.setText(
+                "Not accepting — the backend's serving thread ended. See the log below; "
+                "restart it before running proxy tests."
+            )
 
     def shutdown(self) -> None:
         """Called when the window closes so the listener is released."""

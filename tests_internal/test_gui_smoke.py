@@ -504,3 +504,213 @@ def test_interface_enumeration_failure_is_logged_not_swallowed(monkeypatch, capl
         assert main_window_mod._list_interface_names() == []
 
     assert "Could not enumerate network interfaces" in caplog.text
+
+
+def test_an_uncreatable_run_directory_reports_instead_of_crashing(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    """`start` runs inside a `clicked` slot, where an escaping exception
+    reaches sys.excepthook — which logs, shows a dialog, and ends the
+    process. An unwritable reports/ must not cost the session."""
+    import src.gui.run_controller as run_controller_mod
+    from src.config import DUTConfig
+    from src.errors import RunArtifactError
+    from src.gui.run_controller import RunController
+    from src.runner import RunRequest
+
+    def _refuse() -> tuple[str, object]:
+        raise RunArtifactError("Could not create the run directory /nope: denied")
+
+    monkeypatch.setattr(run_controller_mod, "new_run_dir", _refuse)
+
+    controller = RunController()
+    request = RunRequest(
+        config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")
+    )
+
+    with qtbot.waitSignal(controller.failed, timeout=5000) as blocker:
+        controller.start(request)
+
+    assert "Could not create the run directory" in blocker.args[0]
+    assert not controller._timer.isActive()
+
+
+def test_a_results_write_failure_still_delivers_the_run(qtbot, tmp_path, monkeypatch) -> None:
+    """finalize_run is called from Qt slots. A full disk there used to take
+    the window down; the run's result is complete in memory either way."""
+    import src.gui.run_controller as run_controller_mod
+    from src.config import DUTConfig
+    from src.errors import RunArtifactError
+    from src.gui.run_controller import RunController
+    from src.runner import RunRequest
+
+    monkeypatch.setattr(
+        run_controller_mod,
+        "build_pytest_args",
+        lambda request, run_dir: [str(tmp_path / "no-such-interpreter"), "tests"],
+    )
+    monkeypatch.setattr(run_controller_mod, "new_run_dir", lambda: ("run-z", tmp_path))
+
+    def _refuse(result, run_dir, returncode):
+        raise RunArtifactError("Could not write results.json: no space left on device")
+
+    monkeypatch.setattr(run_controller_mod, "finalize_run", _refuse)
+
+    controller = RunController()
+    reported: list[str] = []
+    controller.save_failed.connect(reported.append)
+    request = RunRequest(
+        config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")
+    )
+
+    with qtbot.waitSignal(controller.finished, timeout=5000) as blocker:
+        controller.start(request)
+
+    assert blocker.args[0] is not None, "the completed run was not delivered"
+    assert reported and "no space left" in reported[0]
+
+
+def _idle_controller(tmp_path, run_id: str):
+    """A RunController holding a started run, with no live QProcess."""
+    from src.config import DUTConfig
+    from src.gui.run_controller import RunController
+    from src.runner import RunRequest, new_run_result
+
+    controller = RunController()
+    controller._run_dir = tmp_path
+    controller._result = new_run_result(
+        run_id,
+        RunRequest(config=DUTConfig(interface="eth0", target_ip="10.0.0.5", target_stack="linux")),
+    )
+    return controller
+
+
+def test_a_stopped_run_is_not_reported_as_a_collection_error(qtbot, tmp_path) -> None:
+    """QProcess.kill() reports the OS crash code (62097 on Windows), and
+    `errored` is `pytest_returncode >= 2` — so pressing Stop was recorded,
+    in the log and in results.json, as "pytest exited with code 62097
+    (collection/usage error or no tests)"."""
+    from PySide6.QtCore import QProcess
+
+    controller = _idle_controller(tmp_path, "run-stopped")
+    controller._stopping = True
+
+    with qtbot.waitSignal(controller.finished, timeout=5000) as blocker:
+        controller._on_finished(62097, QProcess.ExitStatus.CrashExit)
+
+    result = blocker.args[0]
+    assert result.pytest_returncode is None
+    assert not result.errored, "the operator's own Stop was reported as a suite malfunction"
+
+
+def test_a_real_pytest_exit_code_is_still_recorded(qtbot, tmp_path) -> None:
+    """The fix must not swallow the codes pytest actually chooses: 2 is a
+    genuine collection/usage error and has to stay visible."""
+    from PySide6.QtCore import QProcess
+
+    controller = _idle_controller(tmp_path, "run-errored")
+
+    with qtbot.waitSignal(controller.finished, timeout=5000) as blocker:
+        controller._on_finished(2, QProcess.ExitStatus.NormalExit)
+
+    result = blocker.args[0]
+    assert result.pytest_returncode == 2
+    assert result.errored
+
+
+def test_a_malformed_port_is_reported_not_silently_dropped(qtbot) -> None:
+    """None means "unset" everywhere in this codebase, so degrading a typo
+    to None ran the suite against the default backend port — or, on a front
+    leg, a random ephemeral one — instead of what was typed."""
+    from src.errors import ConfigurationError
+    from src.gui.main_window import _split_host_port
+
+    with pytest.raises(ConfigurationError, match="not a port number"):
+        _split_host_port("10.0.0.5:abc")
+
+
+def test_host_only_fields_still_yield_an_unset_port(qtbot) -> None:
+    """Only a port that is present and unparseable is an error; a field with
+    no port at all is a host, and stays one."""
+    from src.gui.main_window import _split_host_port
+
+    assert _split_host_port("") == (None, None)
+    assert _split_host_port("10.0.0.5") == ("10.0.0.5", None)
+    assert _split_host_port("10.0.0.5:") == ("10.0.0.5", None)
+    assert _split_host_port("[::1]") == ("::1", None)
+    assert _split_host_port("[::1]:9099") == ("::1", 9099)
+    assert _split_host_port("10.0.0.9:9099") == ("10.0.0.9", 9099)
+
+
+def test_a_malformed_proxy_field_blocks_the_run(qtbot, monkeypatch) -> None:
+    """_on_run_clicked is a `clicked` slot: the report has to reach the log
+    panel, and the exception must not reach sys.excepthook."""
+    from src.gui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._target_ip.setText("10.0.0.5")
+    window._proxy_backend.setText("10.0.0.9:not-a-port")
+
+    started: list[object] = []
+    monkeypatch.setattr(window._controller, "start", started.append)
+
+    window._on_run_clicked()
+
+    assert not started, "the run started with a port the operator did not type"
+    assert "not a port number" in window._log_panel.toPlainText()
+
+
+def test_a_rejected_custom_packet_reports_the_reason(qtbot, monkeypatch) -> None:
+    """The panel's catch-all rendered four quite different failures as one
+    untyped line and logged none of them."""
+    from src.gui.custom_packet_panel import CustomPacketPanel
+
+    panel = CustomPacketPanel()
+    qtbot.addWidget(panel)
+    panel._mode_custom.setChecked(True)
+    panel._custom_hex.setText("zz")  # not hex: a ConfigurationError
+
+    panel._on_send()
+
+    assert "Error:" in panel._response_view.toPlainText()
+    assert "not valid hex" in panel._response_view.toPlainText()
+
+
+def test_an_unexpected_custom_packet_failure_is_typed_and_logged(
+    qtbot, monkeypatch, caplog
+) -> None:
+    """A bug or a Scapy refusal keeps the window (this is a `clicked` slot),
+    but its traceback must reach gui.log rather than being discarded."""
+    import src.gui.custom_packet_panel as panel_mod
+    from src.gui.custom_packet_panel import CustomPacketPanel
+
+    def _explode(*_args, **_kwargs):
+        raise OSError("no such device: eth42")
+
+    monkeypatch.setattr(panel_mod, "send_custom_packet", _explode)
+
+    panel = CustomPacketPanel()
+    qtbot.addWidget(panel)
+
+    with caplog.at_level("ERROR"):
+        panel._on_send()
+
+    shown = panel._response_view.toPlainText()
+    assert "OSError" in shown, "the operator cannot tell a bug from bad input"
+    assert "no such device" in shown
+    assert "Custom packet send failed" in caplog.text
+
+
+def test_controller_callbacks_are_safe_before_a_run_starts(qtbot) -> None:
+    """These were asserts, which `python -O` strips — leaving an
+    AttributeError on None inside a Qt slot, which ends the process. They
+    encode an ordering between separate callbacks, not a local invariant."""
+    from src.gui.run_controller import RunController
+
+    controller = RunController()
+
+    controller._drain()  # a poll with no run behind it
+    controller._on_output()  # output with no process
+
+    assert controller._report_offset == 0

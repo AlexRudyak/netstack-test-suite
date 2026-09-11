@@ -5,6 +5,8 @@ the automated suite uses.
 """
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -25,7 +27,10 @@ from PySide6.QtWidgets import (
 
 from src.custom_packet.builder import CustomPacketSpec, Proto
 from src.custom_packet.sender import send_custom_packet
+from src.errors import NetstackError
 from src.packet_engine.payloads import PayloadMode, resolve_custom_source
+
+log = logging.getLogger(__name__)
 
 
 class CustomPacketPanel(QWidget):
@@ -186,5 +191,19 @@ class CustomPacketPanel(QWidget):
             self._response_view.setPlainText(
                 reply.summary() if reply is not None else "No reply received within timeout."
             )
-        except Exception as exc:  # surfaced in the panel, not a GUI crash
-            self._response_view.setPlainText(f"Error: {exc}")
+        except NetstackError as exc:
+            # A deliberate failure: unparseable hex, an unreadable payload
+            # file, a host OS with no socket backend. The message names what
+            # to fix, so it is the whole report.
+            log.warning("Custom packet send rejected: %s", exc)
+            self._response_view.setPlainText(exc.render())
+        except Exception as exc:
+            # A bug, or Scapy refusing the interface. Keeping the window is
+            # right — this is a `clicked` slot, where an escape reaches
+            # sys.excepthook and ends the process — but the traceback was
+            # discarded with it, and nothing reached gui.log. That left the
+            # operator one untyped line for four quite different failures.
+            log.exception("Custom packet send failed")
+            self._response_view.setPlainText(
+                f"{type(exc).__name__}: {exc}\n\nThe details were written to the log."
+            )

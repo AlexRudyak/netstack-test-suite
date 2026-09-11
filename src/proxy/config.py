@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from src.errors import ConfigurationError
+
 # Where the backend instance (`netstack-cli proxy-serve`, or the GUI's Proxy
 # Backend tab) listens by default. Referenced by the CLI, the GUI and the
 # pytest option defaults so the two instances agree without being told twice.
@@ -77,7 +79,13 @@ class ProxyConfig:
 
     def __post_init__(self) -> None:
         if self.mode.is_explicit and not (self.proxy_host and self.proxy_port):
-            raise ValueError(
+            # ConfigurationError, not a bare ValueError: this worked only
+            # because its one caller (the proxy_config fixture) knew the
+            # concrete builtin type to catch, which is the coupling the
+            # hierarchy exists to remove. A second caller — a GUI panel, a
+            # `proxy-connect` subcommand — would get a traceback the
+            # entry-point boundary does not render.
+            raise ConfigurationError(
                 f"{self.mode.value} is an explicit proxy mode and needs "
                 "proxy_host and proxy_port (the DUT's front address)."
             )

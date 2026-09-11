@@ -18,7 +18,7 @@ import ipaddress
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from src.errors import ConfigurationError, ProtocolViolation
+from src.errors import ConfigurationError, PeerClosedEarly, ProtocolViolation
 
 Reader = Callable[[int], bytes]
 """Reads exactly n bytes (raising on short read) — a socket or a test stub."""
@@ -99,7 +99,7 @@ def read_http_response_head(read: Reader) -> bytes:
     while HEADER_TERMINATOR not in buffer:
         chunk = read(1)
         if not chunk:
-            raise ConnectionError("proxy closed the connection during the CONNECT response")
+            raise PeerClosedEarly("proxy closed the connection during the CONNECT response")
         buffer += chunk
         if len(buffer) > 64 * 1024:
             raise ProtocolViolation("HTTP response header block exceeded 64 KiB")
@@ -229,7 +229,7 @@ def read_socks5_reply(read: Reader) -> Socks5Reply:
     """
     header = read(4)
     if len(header) != 4:
-        raise ConnectionError("short SOCKS5 reply header")
+        raise PeerClosedEarly("short SOCKS5 reply header")
     version, reply_code, _reserved, atyp = header
     if version != SOCKS5_VERSION:
         raise ProtocolViolation(f"expected SOCKS version 0x05 in reply, got 0x{version:02x}")
@@ -243,7 +243,7 @@ def read_socks5_reply(read: Reader) -> Socks5Reply:
         # returns b"" instead would make this an IndexError no caller expects.
         raw_length = read(1)
         if not raw_length:
-            raise ConnectionError("proxy closed before the SOCKS5 domain length byte")
+            raise PeerClosedEarly("proxy closed before the SOCKS5 domain length byte")
         host = read(raw_length[0]).decode("ascii", errors="replace")
     else:
         raise ProtocolViolation(f"unknown SOCKS5 address type 0x{atyp:02x}")

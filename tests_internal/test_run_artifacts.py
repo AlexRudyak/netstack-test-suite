@@ -85,3 +85,20 @@ def test_reports_artifact_list_is_generated_not_retyped() -> None:
     }
     assert named == written, "the reports describe files the runner does not write, or vice versa"
     assert all(description.strip() for _, description in RunArtifacts.DESCRIPTIONS)
+
+
+def test_an_unwritable_run_directory_raises_a_netstack_error(tmp_path: Path) -> None:
+    """A bare OSError here is not renderable by either entry point: the CLI
+    boundary catches NetstackError only (deliberately), and in the GUI these
+    writes happen inside Qt slots, where an escape ends the process."""
+    from src.errors import NetstackError, RunArtifactError
+
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+
+    with pytest.raises(RunArtifactError) as caught:
+        RunArtifacts(blocker / "run-1").save(make_run_result())
+
+    assert isinstance(caught.value, NetstackError)
+    assert "results.json" in str(caught.value)
+    assert "already on disk" in str(caught.value), "the operator is not told what survived"

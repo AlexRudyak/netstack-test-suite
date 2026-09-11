@@ -84,3 +84,23 @@ def test_render_lines_prefixes_levels(monkeypatch) -> None:
     lines = run_preflight(_config()).render_lines()
     assert any(line.startswith("[ok]") for line in lines)
     assert any(line.startswith("[warn]") for line in lines)
+
+
+def test_an_unexpected_failure_is_not_blamed_on_the_interface(monkeypatch, caplog) -> None:
+    """The `try` spans the Scapy imports and the packet construction too, so
+    a broken install or an API change was reported as "check the interface
+    name" — advice that cannot fix it — with the traceback thrown away."""
+    monkeypatch.setattr(preflight, "require_elevation", lambda: None)
+
+    def _bug(pkt, iface, timeout, verbose):
+        raise TypeError("srp1() got an unexpected keyword argument 'verbose'")
+
+    monkeypatch.setattr("scapy.sendrecv.srp1", _bug)
+
+    with caplog.at_level("ERROR"):
+        result = run_preflight(_config())
+
+    assert result.ok is False
+    assert any("TypeError" in e for e in result.errors), "the operator cannot see it is a bug"
+    assert not any("Check the interface name" in e for e in result.errors)
+    assert "Preflight ARP probe failed unexpectedly" in caplog.text

@@ -22,14 +22,17 @@ def configure_logging(level: int = logging.INFO, *, log_file: Path | None = None
     later --verbose.
     """
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    failure: OSError | None = None
     if log_file is not None:
         try:
             log_file.parent.mkdir(parents=True, exist_ok=True)
             handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
-        except OSError:
+        except OSError as exc:
             # An unwritable log destination must not stop the app starting;
-            # the console handler still carries everything.
-            pass
+            # the console handler still carries everything. Reported below
+            # rather than here, because there is nowhere to report it to
+            # until basicConfig has installed that handler.
+            failure = exc
     logging.basicConfig(
         level=level,
         format=LOG_FORMAT,
@@ -37,3 +40,11 @@ def configure_logging(level: int = logging.INFO, *, log_file: Path | None = None
         handlers=handlers,
         force=True,
     )
+    if failure is not None:
+        logging.getLogger(__name__).warning(
+            "Could not open the log file %s: %s. Logging to the console only — "
+            "the GUI's log panel is cleared at the start of every run, so a "
+            "failed run will leave no durable record.",
+            log_file,
+            failure,
+        )

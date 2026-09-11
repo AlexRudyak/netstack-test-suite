@@ -32,6 +32,7 @@ from src.config import (
     resolve_leg_target,
     resolve_role,
 )
+from src.errors import NetstackError
 from src.packet_engine.interface import NetworkInterface
 from src.packet_engine.payloads import PayloadMode
 from src.proxy.config import DEFAULT_BACKEND_PORT, ProxyConfig, ProxyMode
@@ -175,7 +176,16 @@ def proxy_config(pytestconfig: pytest.Config) -> ProxyConfig:
     Only reached by `proxy`-marked tests, which the collection hook already
     skips when --proxy-mode is absent.
     """
-    mode = ProxyMode(pytestconfig.getoption("--proxy-mode"))
+    raw_mode = pytestconfig.getoption("--proxy-mode")
+    if not raw_mode:
+        # The collection hook skips proxy-marked tests when --proxy-mode is
+        # absent, so this is unreachable through the normal path — but the
+        # guarantee rests on a marker on the test, not on anything here, and
+        # ProxyMode(None) is an unhelpful way to find that out.
+        pytest.fail(
+            "--proxy-mode is required for proxy tests "
+            f"({'|'.join(m.value for m in ProxyMode)}); see docs/proxy_testing.md."
+        )
     backend_host = pytestconfig.getoption("--backend-host")
     if not backend_host:
         pytest.fail(
@@ -184,13 +194,13 @@ def proxy_config(pytestconfig: pytest.Config) -> ProxyConfig:
         )
     try:
         return ProxyConfig(
-            mode=mode,
+            mode=ProxyMode(raw_mode),
             backend_host=backend_host,
             backend_port=pytestconfig.getoption("--backend-port"),
             proxy_host=pytestconfig.getoption("--proxy-host"),
             proxy_port=pytestconfig.getoption("--proxy-port"),
         )
-    except ValueError as exc:
+    except (NetstackError, ValueError) as exc:  # ValueError: the enum lookup
         pytest.fail(str(exc))
 
 

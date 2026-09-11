@@ -16,10 +16,13 @@ Distinguishes hard blockers from warnings:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from src.config import DUTConfig
 from src.utils.permissions import InsufficientPrivilegesError, require_elevation
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -69,12 +72,26 @@ def run_preflight(config: DUTConfig, *, timeout: float = 1.5) -> PreflightResult
             timeout=timeout,
             verbose=False,
         )
-    except Exception as exc:  # interface missing / driver / permission at send time
+    except OSError as exc:  # interface missing / driver / permission at send time
         return PreflightResult(
             ok=False,
             errors=[
                 f"Could not send on interface {config.interface!r}: {exc}",
                 "Check the interface name and that Npcap (Windows) / capabilities (Linux) are set up.",
+            ],
+            info=info,
+        )
+    except Exception as exc:
+        # The `try` also spans two imports and the packet construction, so a
+        # Scapy API change or a broken install used to be reported as "check
+        # the interface name" — advice that cannot fix it — with the
+        # traceback discarded and nothing written to the log.
+        log.exception("Preflight ARP probe failed unexpectedly")
+        return PreflightResult(
+            ok=False,
+            errors=[
+                f"Preflight probe failed unexpectedly: {type(exc).__name__}: {exc}",
+                "This is not a configuration problem — the details were written to the log.",
             ],
             info=info,
         )

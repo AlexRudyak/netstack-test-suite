@@ -24,6 +24,19 @@ class NetstackError(Exception):
 
     exit_code: int = 1
 
+    def render(self, *, prefix: str = "Error") -> str:
+        """The one user-facing rendering, shared by every boundary.
+
+        Six surfaces had each invented their own — `Error: {exc}`,
+        `[FAIL] {msg}`, `Failed to start: {exc}` — so the same
+        ConfigurationError read differently depending on which one caught
+        it, and only two of the six named the type. The type is the part
+        that tells the operator what kind of thing went wrong:
+        ConfigurationError and UnauthorizedTargetError call for quite
+        different reactions.
+        """
+        return f"{prefix}: [{type(self).__name__}] {self}"
+
 
 class ConfigurationError(NetstackError):
     """Invalid or missing run configuration.
@@ -68,6 +81,21 @@ class CaptureError(NetstackError):
     """A packet capture could not be started, or failed while running."""
 
 
+class RunArtifactError(NetstackError):
+    """A run's directory or results file could not be written.
+
+    The pcap and the debug log flush per frame, so the *evidence* of a run
+    survives a full disk or a read-only reports/ — it is the verdict and the
+    machine-readable record that do not, and results.json is the only thing
+    `reporting.collector.load_run_result` can read back.
+
+    Raised rather than left as a bare OSError so both entry points can tell
+    the operator which file, and say that the rest of the run is still on
+    disk: in the GUI these writes happen inside Qt slots, where an unhandled
+    exception reaches sys.excepthook and ends the process.
+    """
+
+
 class ProtocolViolation(NetstackError, ValueError):
     """The peer's bytes do not conform to the protocol's RFC.
 
@@ -79,6 +107,21 @@ class ProtocolViolation(NetstackError, ValueError):
 
     Subclasses ValueError as well, so the handlers that already catch
     ValueError around those calls keep working unchanged.
+    """
+
+
+class PeerClosedEarly(ProtocolViolation, ConnectionError):
+    """The DUT closed the connection part-way through a protocol message.
+
+    "The proxy hung up before finishing its SOCKS5 reply" is an observation
+    about the DUT, exactly like a malformed reply is — but it was raised as
+    a builtin ConnectionError, the type the OS uses for a local socket
+    problem, so tests/proxy/ could not claim it as a verdict and
+    ProxyClient could not classify it.
+
+    Subclasses ConnectionError as well, so the handlers that already catch
+    that (the proxy fixtures, ProxyClient.connect's cleanup) keep working
+    unchanged.
     """
 
 

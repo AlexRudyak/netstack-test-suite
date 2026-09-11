@@ -80,7 +80,11 @@ class NetstackCLI(click.Group):
         try:
             return super().invoke(ctx)
         except NetstackError as exc:
-            click.echo(f"Error: {exc}", err=True)
+            # DEBUG, not WARNING: the console is already this boundary's
+            # output, so logging at INFO would print the same failure twice.
+            # `-v` turns this into the traceback the rendered line omits.
+            log.debug("Rendering %s at the CLI boundary", type(exc).__name__, exc_info=exc)
+            click.echo(exc.render(), err=True)
             raise SystemExit(exc.exit_code) from None
 
 
@@ -323,7 +327,19 @@ def run(
     def on_test_event(event) -> None:
         click.echo(event.summary_line())
 
-    result = run_tests(request, on_test_event=on_test_event)
+    try:
+        result = run_tests(request, on_test_event=on_test_event)
+    except KeyboardInterrupt:
+        # `record` and `proxy-serve` have always handled this; `run` — the
+        # command that can take an hour — did not, so Ctrl+C ended it on a
+        # traceback. stream_run stops the subprocess and saves what it has,
+        # so there is a run directory to point at.
+        click.echo(
+            "\nInterrupted — the test runner was stopped. Partial results were "
+            "saved under reports/ and can still be reported on.",
+            err=True,
+        )
+        raise SystemExit(130) from None
 
     run_dir = Path("reports") / result.run_id
     sys.exit(_emit_results(result, run_dir, report=report, debug=debug))

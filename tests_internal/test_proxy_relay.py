@@ -16,10 +16,11 @@ import threading
 
 import pytest
 
+from src.errors import ProtocolViolation
 from src.proxy import tunnel
 from src.proxy.backend import EchoBackend
 from src.proxy.client import ProxyClient, ProxyTunnelError
-from src.proxy.config import ProxyConfig, ProxyMode
+from src.proxy.config import RECV_CHUNK, ProxyConfig, ProxyMode
 
 pytestmark = [pytest.mark.internal]
 
@@ -229,6 +230,75 @@ def test_client_half_close_propagates_to_eof(backend, mode: ProxyMode) -> None:
             assert client.read_until_eof() == b""  # clean EOF, no hang
 
 
+class HangingOrigin:
+    """Echoes once, then holds the connection open forever.
+
+    The smallest form of the defect the half-close tests exist to find: a
+    peer that never propagates the close. `read_until_eof` used to return
+    b"" here — the same value a clean EOF produces — so the test asserting
+    "we observed a clean EOF" passed on the hang.
+    """
+
+    def __init__(self) -> None:
+        self._stop = threading.Event()
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind((LOOPBACK, 0))
+        self._sock.listen(1)
+        self._sock.settimeout(0.5)
+        self.port: int = self._sock.getsockname()[1]
+        self._held: list[socket.socket] = []
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+    def __enter__(self) -> "HangingOrigin":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._stop.set()
+        for conn in self._held:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+        self._thread.join(timeout=2)
+
+    def _serve(self) -> None:
+        try:
+            conn, _ = self._sock.accept()
+        except OSError:
+            return
+        self._held.append(conn)
+        try:
+            data = conn.recv(RECV_CHUNK)
+            if data:
+                conn.sendall(data)
+        except OSError:
+            return
+        self._stop.wait()  # never send FIN
+
+
+def test_read_until_eof_raises_when_the_peer_never_closes() -> None:
+    """A read timeout is the opposite verdict from EOF, so it must not
+    return the same bytes: b"" means "the close was propagated"."""
+    with HangingOrigin() as origin:
+        config = ProxyConfig(
+            mode=ProxyMode.TRANSPARENT,
+            backend_host=LOOPBACK,
+            backend_port=origin.port,
+            timeout=0.5,
+        )
+        with ProxyClient(config) as client:
+            assert client.roundtrip(b"last-write") == b"last-write"
+            client.half_close()
+            with pytest.raises(ProtocolViolation, match="did not propagate"):
+                client.read_until_eof()
+
+
 def test_tunnel_details_expose_rfc_fields(backend) -> None:
     with StubProxy(ProxyMode.SOCKS5) as proxy:
         with ProxyClient(_config(backend, ProxyMode.SOCKS5, proxy.port)) as client:
@@ -311,8 +381,15 @@ def test_a_non_tunnel_error_also_releases_the_socket(backend, monkeypatch) -> No
 
 
 def test_explicit_mode_requires_a_front_address(backend) -> None:
-    with pytest.raises(ValueError, match="explicit proxy mode"):
+    """A ConfigurationError, so any caller can render it through the
+    boundary. It used to be a bare ValueError, which worked only because
+    the one caller — the proxy_config fixture — knew to catch that type."""
+    from src.errors import ConfigurationError, NetstackError
+
+    with pytest.raises(ConfigurationError, match="explicit proxy mode") as caught:
         ProxyConfig(mode=ProxyMode.SOCKS5, backend_host=LOOPBACK, backend_port=1)
+
+    assert isinstance(caught.value, NetstackError)
 
 
 def test_a_handshake_exists_for_every_proxy_mode() -> None:
@@ -396,3 +473,45 @@ def test_a_backend_can_be_restarted_after_stop() -> None:
         backend.stop()
 
     assert first_port  # the first bind really did happen
+
+
+def test_a_serving_thread_that_dies_unexpectedly_says_so(caplog) -> None:
+    """stop() breaks the loops by closing the socket, so every loop ends on
+    an OSError. Treating an unexpected one the same way ended the thread in
+    silence: the panel kept saying "Listening", the counters froze, and the
+    other instance saw only origin timeouts."""
+    events: list[str] = []
+    backend = EchoBackend(LOOPBACK, 0, on_event=events.append)
+    backend.start()
+    try:
+        with caplog.at_level("ERROR"):
+            backend._report_loop_exit("TCP accept loop", OSError("interface went away"))
+    finally:
+        backend.stop()
+
+    assert any("stopped unexpectedly" in line for line in events)
+    assert any("interface went away" in line for line in events)
+    assert "EchoBackend TCP accept loop failed" in caplog.text
+
+
+def test_a_clean_shutdown_is_not_reported_as_a_failure() -> None:
+    """stop() closes the socket on purpose; that OSError is the expected end."""
+    events: list[str] = []
+    backend = EchoBackend(LOOPBACK, 0, on_event=events.append)
+    backend.start()
+    backend.stop()
+
+    backend._report_loop_exit("TCP accept loop", OSError("socket closed by stop()"))
+
+    assert not any("stopped unexpectedly" in line for line in events)
+
+
+def test_is_serving_tracks_the_threads_not_just_the_reference() -> None:
+    backend = EchoBackend(LOOPBACK, 0)
+    assert not backend.is_serving
+    backend.start()
+    try:
+        assert backend.is_serving
+    finally:
+        backend.stop()
+    assert not backend.is_serving

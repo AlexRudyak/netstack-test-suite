@@ -135,6 +135,17 @@ and the run proceeds.
 so the CLI and GUI can never drift into constructing or parsing a run
 differently.
 
+## Shared surfaces outside the run itself
+
+Not every front-end/engine interaction goes through `runner.py` — only the
+pytest run does. Preflight (`packet_engine/preflight.py`), the proxy
+backend (`proxy/backend.py`), and the custom-packet sender
+(`custom_packet/sender.py`) are independent, synchronous operations that
+both `cli/main.py` and `gui/main_window.py` import directly, by design:
+each is a complete action in itself (probe connectivity, run an echo
+server, send one packet) with no subprocess and no run to route through.
+`runner.py` stays scoped to "build and drain one pytest invocation."
+
 ## Live plotting cadence
 
 Packet events can arrive far faster than any UI can render — a flood

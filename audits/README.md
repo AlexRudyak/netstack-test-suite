@@ -14,6 +14,7 @@ wrong and why* survives the change.
 | [Design patterns](design-patterns-audit.md) | `cbe4af1` | 14 of 16 applied; 2 no-action by design |
 | [Error handling](error-handling-audit.md) | `4653b25` | applied |
 | [Error flow](error-flow-audit.md) | `a3a339e` | applied; 2 findings corrected while applying |
+| [Architecture](architecture-audit.md) | `34471b7` | applied |
 
 ## Prompt source
 

@@ -101,6 +101,72 @@ def test_src_import_graph_has_no_cycles() -> None:
     assert cycle is None, "import cycle in src/: " + " -> ".join(cycle or [])
 
 
+# Layer -> the layers it may depend on. Front ends (4) may reach into
+# everything below them; everything below may only reach sideways or down.
+# Same-layer edges are deliberately unchecked (e.g. nothing stops `gui`
+# from importing `cli`, which doesn't happen but isn't the rule this guards
+# — the rule that matters is "nothing below front ends imports upward").
+#
+# `src.reporting.models` and `src.run_artifacts` are pinned to layer 0
+# ahead of the general `src.reporting` entry: both are shared, I/O-adjacent
+# value shapes with no upward dependency of their own (the run-directory
+# naming, the canonical result DTOs) that the engine, the orchestration
+# layer, and the reporting layer all need to agree on — not orchestration
+# or presentation logic themselves. A first pass placed them at layers 3
+# and 2 respectively, by which module they happened to be defined in
+# rather than what depends on them; running this test against the real
+# graph found `packet_engine.interface -> reporting.models` and
+# `reporting.{collector,report_data} -> run_artifacts`, both legitimate,
+# which is what motivated pulling them down to the kernel tier.
+_LAYER = {
+    "src": 0,  # the empty package marker; `from src import paths` reaches it too
+    "src.cli": 4,
+    "src.gui": 4,
+    "src.runner": 3,
+    "src.collection_policy": 3,
+    "src.reporting.models": 0,
+    "src.reporting": 2,
+    "src.plotting": 2,
+    "src.packet_engine": 1,
+    "src.proxy": 1,
+    "src.custom_packet": 1,
+    "src.utils": 1,
+    "src.config": 0,
+    "src.catalog": 0,
+    "src.target_profiles": 0,
+    "src.errors": 0,
+    "src.paths": 0,
+    "src.run_artifacts": 0,
+}
+
+
+def _layer_of(module: str) -> int:
+    """The layer of `module`, matched by longest containing package prefix
+    (`src.gui.report_panel` resolves via the `src.gui` entry)."""
+    prefix = max((p for p in _LAYER if module == p or module.startswith(p + ".")), key=len)
+    return _LAYER[prefix]
+
+
+def test_no_upward_or_reverse_layer_imports() -> None:
+    """`src/`'s five layers (config/domain, engine, output, orchestration,
+    front ends) must only depend downward or sideways.
+
+    A cycle-only guard would not catch this: `src.packet_engine` importing
+    `src.gui` creates no cycle (gui already depends on packet_engine), so
+    `test_src_import_graph_has_no_cycles` would pass while the engine layer
+    quietly grew a dependency on Qt. This test checks direction, not just
+    the absence of a loop.
+    """
+    graph = _import_graph()
+    violations = sorted(
+        f"{src} (layer {_layer_of(src)}) -> {dst} (layer {_layer_of(dst)})"
+        for src, deps in graph.items()
+        for dst in deps
+        if _layer_of(src) < _layer_of(dst)
+    )
+    assert not violations, "layering violation(s):\n" + "\n".join(violations)
+
+
 def test_proxy_package_imports_nothing() -> None:
     """The re-exports are what created the cycle, and no caller used them.
 

@@ -539,7 +539,8 @@ class MainWindow(QMainWindow):
     def _on_finished(self, result: TestRunResult) -> None:
         self._report_panel.set_result(result)
         self._set_running(False)
-        self._set_status(*_verdict(result, stopped=self._stopped, launch_failed=self._launch_failed))
+        text, state = _verdict(result, stopped=self._stopped, launch_failed=self._launch_failed)
+        self._set_status(text, state=state)
         if self._launch_failed:
             return  # _on_launch_failed already said what went wrong
         if self._stopped:

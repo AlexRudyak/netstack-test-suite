@@ -121,6 +121,13 @@ Start at [`src/README.md`](src/README.md) — the module map. Per-package docs:
 - [`tests/README.md`](tests/README.md) — the DUT-facing suite (per-module + per-test docs)
 - [`tests_internal/README.md`](tests_internal/README.md) — framework self-validation
 
+## See it in action
+
+| Pick your tests | Watch it run | Craft a raw packet |
+|---|---|---|
+| ![Test selection tree](docs/images/gui-test-tree.png) | ![Live tx/rx plot](docs/images/gui-live-plot.png) | ![Custom Packet sender](docs/images/gui-custom-packet.png) |
+| Module → file → test, with RFC clause and description per test | Cumulative sent/received while the run is in flight | Zeros/ones/random/custom L7 payload, sent ad-hoc outside the suite |
+
 ## What the output looks like
 
 The report is the artifact you hand to whoever fixes the stack — findings
@@ -128,6 +135,14 @@ first, each naming its RFC clause, what the test checked, and what the DUT
 actually did:
 
 ![The generated HTML conformance report](docs/images/report-html.png)
+
+The same run also produces the charts embedded in the PDF version:
+
+| Packet timeline | Pass/fail summary |
+|---|---|
+| ![Packet timeline](docs/images/chart-packet-timeline.png) | ![Pass/fail summary](docs/images/chart-pass-fail-summary.png) |
+
+More screenshots, including every GUI panel, in [`docs/screenshots.md`](docs/screenshots.md).
 
 ## Documentation
 

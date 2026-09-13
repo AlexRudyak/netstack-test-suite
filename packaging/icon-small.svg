@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"
+     role="img" aria-label="Netstack Test Suite">
+  <title>Netstack Test Suite (small sizes)</title>
+  <!--
+    The 16-24px frames of the icon. Same mark as icon.svg, stripped to what
+    a 16px grid can actually hold: at that size the full drawing's plate
+    edges, packet and glow are each under one pixel, and downsampling turns
+    them into one blue smear.
+
+    What survives here is the silhouette and the story's first beat: three
+    layers, the top one cleared. Everything is laid out on a 16-unit grid
+    (16 svg units = 1 pixel at 16px) so the plates land on pixel boundaries
+    with a clean gap between them instead of a grey blur:
+      plates centred on rows 4.5 / 8.5 / 12.5, one clear row between each.
+
+    Edit this whenever icon.svg's mark changes, and re-check both with
+    tools/generate_icon.py.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e2734"/>
+      <stop offset="1" stop-color="#0d1118"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="248" height="248" rx="56" fill="url(#tile)"/>
+
+  <!-- Layer 1 — cleared, lit -->
+  <path d="M128 48 L232 72 L128 96 L24 72 Z" fill="#38bdf8"/>
+  <!-- Layer 2 — under test -->
+  <path d="M128 112 L232 136 L128 160 L24 136 Z" fill="#55688a"/>
+  <!-- Layer 3 — not reached -->
+  <path d="M128 176 L232 200 L128 224 L24 200 Z" fill="#333f53"/>
+</svg>

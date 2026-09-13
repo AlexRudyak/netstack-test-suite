@@ -26,6 +26,7 @@ datas = [
     ("tests", "tests"),  # the DUT test suite the app runs (tests_internal is dev-only, not shipped)
     ("conftest.py", "."),
     ("pyproject.toml", "."),
+    ("packaging/icon.png", "packaging"),  # the Qt window icon (src/paths.app_icon)
 ]
 # Config/data files pytest and its reportlog plugin ship.
 datas += collect_data_files("pytest")
@@ -67,6 +68,11 @@ exe_kwargs = dict(
 )
 if is_windows:
     exe_kwargs["uac_admin"] = True  # request Administrator via UAC on launch
+    # The exe's own icon, in its resources — what Explorer, the taskbar and
+    # the installer show. PyInstaller only embeds one on Windows and macOS;
+    # a Linux ELF has no icon slot, and gets the window icon at runtime
+    # instead (src/paths.app_icon).
+    exe_kwargs["icon"] = "packaging/icon.ico"
 
 exe = EXE(
     pyz,

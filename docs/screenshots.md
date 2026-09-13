@@ -20,10 +20,12 @@ description, live plot, and the run summary with report export.
 
 Module: [`src/gui/main_window.py`](../src/gui/README.md#main_windowpy)
 
-### DUT configuration
+### Configuration bar
 
-Interface, target IP/MAC, target stack profile, role, the CIDR allow-list,
-and the two gates a run passes through — vuln authorization and debug mode.
+Endpoint settings on the left — interface, target IP/MAC, target stack
+profile, role, ports, the CIDR allow-list, and the two gates a run passes
+through (vuln authorization and debug mode) — with proxy topology kept in
+its own card on the right, where it is inert unless the DUT is a relay.
 
 ![DUT configuration](images/gui-dut-configuration.png)
 

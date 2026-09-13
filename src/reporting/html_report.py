@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
+from src import design_tokens
 from src.reporting import report_data
 from src.reporting.models import TestOutcome, TestRunResult
 from src.reporting.palette import OUTCOME_STYLE
@@ -176,33 +177,78 @@ def _appendix_rfcs() -> str:
     )
 
 
+def _root_css() -> str:
+    """The report's custom properties: the shared tokens plus the paper
+    palette that only a printed document needs.
+
+    Written as a function for the same reason `_palette_css()` is — the
+    values come from `src/design_tokens.py`, so the app and its report
+    cannot drift apart on what the accent colour is.
+    """
+    return ":root {\n" + design_tokens.css_variables() + """
+  --ink: #16202c;
+  --ink-muted: #5b6b7d;
+  --paper: #ffffff;
+  --ground: #f6f8fa;
+  --rule: #dfe5ec;
+}"""
+
+
 _STYLE = """
-:root { color-scheme: light dark; }
-body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; line-height: 1.45; color: #1a1a1a; }
-h1 { margin-bottom: 0.2rem; }
-h2 { margin-top: 2rem; border-bottom: 2px solid #ddd; padding-bottom: 0.2rem; }
-h3 { margin-top: 1.2rem; color: #333; }
-table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
-td, th { border: 1px solid #ccc; padding: 5px 8px; font-size: 0.85rem; text-align: left; vertical-align: top; }
-th { background: #333; color: #fff; }
-table.meta th { width: 12rem; background: #f4f4f4; color: #222; }
-code { font-family: ui-monospace, Consolas, monospace; font-size: 0.82rem; word-break: break-all; }
-pre { background: #f4f4f4; padding: 0.6rem; border-radius: 4px; overflow-x: auto; font-size: 0.82rem; }
-.finding { border: 1px solid #ddd; border-left: 5px solid; border-radius: 5px; padding: 0.7rem 0.9rem; margin: 0.7rem 0; background: #fff; }
+* { box-sizing: border-box; }
+body {
+  font-family: var(--font-ui);
+  margin: 0;
+  padding: 2.5rem max(1.25rem, calc(50% - 32rem));
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--ground);
+  font-size: 15px;
+}
+h1 { font-size: 1.9rem; letter-spacing: -0.02em; margin: 0 0 0.2rem; }
+h2 {
+  font-size: 1.15rem; letter-spacing: -0.01em; margin: 0 0 0.9rem;
+  padding-bottom: 0.45rem; border-bottom: 1px solid var(--rule);
+}
+h3 { font-size: 0.98rem; margin: 1.4rem 0 0.4rem; color: var(--ink); }
+section {
+  background: var(--paper); border: 1px solid var(--rule);
+  border-radius: var(--radius); padding: 1.4rem 1.5rem; margin: 1.25rem 0;
+}
+table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 0.5rem 0; }
+td, th { padding: 7px 10px; font-size: 0.84rem; text-align: left; vertical-align: top;
+         border-bottom: 1px solid var(--rule); }
+th { background: var(--ground); color: var(--ink-muted); font-weight: 600;
+     text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72rem;
+     border-bottom: 1px solid var(--rule); }
+tbody tr:last-child td { border-bottom: none; }
+table.meta th { width: 11rem; text-transform: none; letter-spacing: 0; font-size: 0.84rem; }
+code { font-family: var(--font-mono); font-size: 0.82em; word-break: break-all; }
+pre { background: #0f141b; color: #e3e9f2; padding: 0.8rem 1rem;
+      border-radius: var(--radius-small); overflow-x: auto; font-size: 0.8rem;
+      font-family: var(--font-mono); }
+.finding {
+  border: 1px solid var(--rule); border-left: 4px solid; border-radius: var(--radius);
+  padding: 0.9rem 1.1rem; margin: 0.8rem 0; background: var(--ground);
+}
 .finding-head { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
-.finding-title { font-weight: 700; font-size: 1.02rem; }
-.finding-rfc { margin-left: auto; color: #555; font-size: 0.82rem; }
-.finding-node code { color: #444; }
-.finding-desc, .finding-msg { margin-top: 0.3rem; font-size: 0.88rem; }
-.badge { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; padding: 1px 7px; border-radius: 10px; color: #fff; }
-.pill { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 0.8rem; margin-right: 4px; background: #eee; }
-.note { color: #555; font-size: 0.85rem; }
-ul.rfcs li { margin: 0.2rem 0; }
-@media (prefers-color-scheme: dark) {
-  body { background: #1e1e1e; color: #e6e6e6; }
-  h2 { border-color: #444; } h3 { color: #ccc; }
-  td, th { border-color: #444; } table.meta th { background: #2a2a2a; color: #ddd; }
-  .finding { background: #262626; border-color: #444; } pre, td.passed { }
+.finding-title { font-weight: 650; font-size: 1rem; }
+.finding-rfc { margin-left: auto; color: var(--ink-muted); font-size: 0.78rem;
+               white-space: nowrap; }
+.finding-node code { color: var(--ink-muted); }
+.finding-desc, .finding-msg { margin-top: 0.45rem; font-size: 0.87rem; }
+.badge { font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+         letter-spacing: 0.05em; padding: 2px 8px; border-radius: 999px; color: #fff; }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px;
+        font-size: 0.78rem; font-weight: 600; margin-right: 5px; background: var(--ground);
+        border: 1px solid var(--rule); }
+.note { color: var(--ink-muted); font-size: 0.87rem; }
+.lede { color: var(--ink-muted); font-size: 0.95rem; margin: 0 0 1.6rem; max-width: 44rem; }
+ul.rfcs li { margin: 0.25rem 0; }
+@media print {
+  body { background: #fff; padding: 0; font-size: 12px; }
+  section { border: none; padding: 0; margin: 1rem 0; break-inside: avoid; }
+  .finding { break-inside: avoid; }
 }
 """
 
@@ -211,11 +257,12 @@ def generate_html_report(result: TestRunResult, output_path: Path) -> Path:
     html_doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>Netstack DUT Report — {_e(result.run_id)}</title>
-<style>{_STYLE}
+<style>{_root_css()}
+{_STYLE}
 {_palette_css()}</style></head>
 <body>
 <h1>Network Stack Conformance Report</h1>
-<p class="note">{_e(report_data.PURPOSE)}</p>
+<p class="lede">{_e(report_data.PURPOSE)}</p>
 {_summary_section(result)}
 {_findings_section(result)}
 {_artifacts_section(result)}

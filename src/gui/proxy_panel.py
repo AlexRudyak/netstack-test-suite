@@ -12,7 +12,6 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -24,6 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.design_tokens import SPACE
+from src.gui.theme import divider, form_layout, refresh_style
 from src.proxy.backend import EchoBackend
 from src.proxy.config import DEFAULT_BACKEND_PORT
 
@@ -45,41 +46,65 @@ class ProxyBackendPanel(QWidget):
         self._listen_port.setValue(DEFAULT_BACKEND_PORT)
         self._enable_udp = QCheckBox("Also echo UDP on the same port")
 
-        form = QFormLayout()
+        form = form_layout()
         form.addRow("Listen address", self._listen_host)
         form.addRow("Listen port", self._listen_port)
-        form.addRow(self._enable_udp)
+        form.addRow("", self._enable_udp)
 
         self._start_button = QPushButton("Start backend")
+        self._start_button.setProperty("accent", "true")
         self._start_button.clicked.connect(self._start)
         self._stop_button = QPushButton("Stop")
+        self._stop_button.setProperty("danger", "true")
         self._stop_button.clicked.connect(self._stop)
         self._stop_button.setEnabled(False)
         buttons = QHBoxLayout()
+        buttons.setSpacing(SPACE)
+        buttons.addStretch(1)
         buttons.addWidget(self._start_button)
         buttons.addWidget(self._stop_button)
 
-        self._status = QLabel("Stopped.")
+        self._status = QLabel()
         self._stats = QLabel("—")
+        self._stats.setProperty("role", "chip")
+        self._set_status("Stopped.", state="idle")
+
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(2000)
+        self._log.setProperty("role", "console")
+        self._log.setPlaceholderText(
+            "Connections the proxy DUT makes to this backend are logged here."
+        )
+
+        # The counters sit beside the status line: together they are the
+        # answer to "is the DUT's client leg working?", which is the only
+        # question this panel exists to answer.
+        status_row = QHBoxLayout()
+        status_row.setSpacing(SPACE)
+        status_row.addWidget(self._status, stretch=1)
+        status_row.addWidget(self._stats)
 
         config_box = QGroupBox("Backend (origin the proxy DUT dials)")
         config_layout = QVBoxLayout(config_box)
+        config_layout.setSpacing(SPACE + 4)
         config_layout.addLayout(form)
         config_layout.addLayout(buttons)
-        config_layout.addWidget(self._status)
-        config_layout.addWidget(self._stats)
+        config_layout.addWidget(divider())
+        config_layout.addLayout(status_row)
+
+        hint = QLabel(
+            "Run this instance as the <b>server</b> side. On the other instance, run the "
+            "<i>proxy</i> test module pointed at this address."
+        )
+        hint.setProperty("role", "caption")
+        hint.setWordWrap(True)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(SPACE + 2, SPACE + 2, SPACE + 2, SPACE + 2)
+        layout.setSpacing(SPACE + 4)
         layout.addWidget(config_box)
-        layout.addWidget(
-            QLabel(
-                "Run this instance as the <b>server</b> side. On the other instance, run the "
-                "<i>proxy</i> test module pointed at this address."
-            )
-        )
+        layout.addWidget(hint)
         layout.addWidget(self._log, stretch=1)
 
         self._timer = QTimer(self)
@@ -101,11 +126,12 @@ class ProxyBackendPanel(QWidget):
             backend.start()
         except OSError as exc:
             self._log.appendPlainText(f"Failed to start: {exc}")
-            self._status.setText(f"Failed to start: {exc}")
+            self._set_status(f"Failed to start: {exc}", state="bad")
             return
         self._backend = backend
-        self._status.setText(
-            f"Listening on {backend.host}:{backend.bound_port} — waiting for the proxy DUT."
+        self._set_status(
+            f"Listening on {backend.host}:{backend.bound_port} — waiting for the proxy DUT.",
+            state="ok",
         )
         self._start_button.setEnabled(False)
         self._stop_button.setEnabled(True)
@@ -118,7 +144,7 @@ class ProxyBackendPanel(QWidget):
         self._log.appendPlainText(self._backend.stats.summary())
         self._backend = None
         self._timer.stop()
-        self._status.setText("Stopped.")
+        self._set_status("Stopped.", state="idle")
         self._start_button.setEnabled(True)
         self._stop_button.setEnabled(False)
 
@@ -130,10 +156,18 @@ class ProxyBackendPanel(QWidget):
             # Holding a reference is not the same as still accepting: the
             # serving threads can end on an OSError that stop() did not
             # cause, and this label was the operator's only indication.
-            self._status.setText(
+            self._set_status(
                 "Not accepting — the backend's serving thread ended. See the log below; "
-                "restart it before running proxy tests."
+                "restart it before running proxy tests.",
+                state="bad",
             )
+
+    def _set_status(self, text: str, *, state: str) -> None:
+        """The status line and its ink, set together — a red failure must
+        never be left wearing the green of the last successful start."""
+        self._status.setText(text)
+        self._status.setProperty("state", state)
+        refresh_style(self._status)
 
     def shutdown(self) -> None:
         """Called when the window closes so the listener is released."""

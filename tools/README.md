@@ -19,8 +19,10 @@ it a synthetic `TestRunResult`, and calls `QWidget.grab()`. Output is
 deterministic, so a regenerated image only changes when the UI actually
 changed.
 
-Re-run it after any change to `src/gui/`, `src/plotting/` or
-`src/reporting/`, and commit the regenerated images with the code change.
+Re-run it after any change to `src/gui/`, `src/plotting/`,
+`src/reporting/` or `src/design_tokens.py`, and commit the regenerated
+images with the code change. It calls `gui.theme.apply_theme` first, so
+the images show the app as it ships rather than an unstyled build.
 
 ### What it produces
 
@@ -28,7 +30,7 @@ Re-run it after any change to `src/gui/`, `src/plotting/` or
 |---|---|
 | `gui-main-window.png` | `MainWindow`, Live plot tab |
 | `gui-main-window-log.png` | `MainWindow`, Log tab |
-| `gui-dut-configuration.png` | `MainWindow._build_config_group()` |
+| `gui-dut-configuration.png` | `MainWindow._build_config_bar()` — both configuration cards |
 | `gui-test-tree.png` | `TestTreeWidget` |
 | `gui-test-details.png` | `TestDetailsPanel` |
 | `gui-log-panel.png` | `LogPanel` |

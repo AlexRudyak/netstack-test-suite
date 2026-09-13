@@ -11,9 +11,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.custom_packet.builder import CustomPacketSpec, Proto
+from src.design_tokens import SPACE
+from src.gui.theme import form_layout
 from src.custom_packet.sender import send_custom_packet
 from src.errors import NetstackError
 from src.packet_engine.payloads import PayloadMode, resolve_custom_source
@@ -56,19 +58,28 @@ class CustomPacketPanel(QWidget):
         self._ttl.setValue(64)
         self._tcp_flags = QLineEdit("S")
 
+        # Two columns, addresses beside ports/framing: ten stacked rows
+        # made the form taller than most windows, so the Send button and
+        # the reply pane — the point of the panel — needed scrolling to.
         fields_box = QGroupBox("Packet fields")
-        form = QFormLayout(fields_box)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        form.addRow("Protocol", self._proto)
-        form.addRow("Interface", self._iface)
-        form.addRow("Source IP", self._src_ip)
-        form.addRow("Destination IP", self._dst_ip)
-        form.addRow("Source port", self._src_port)
-        form.addRow("Destination port", self._dst_port)
-        form.addRow("Source MAC", self._src_mac)
-        form.addRow("Destination MAC", self._dst_mac)
-        form.addRow("TTL", self._ttl)
-        form.addRow("TCP flags", self._tcp_flags)
+        left = form_layout()
+        left.addRow("Protocol", self._proto)
+        left.addRow("Interface", self._iface)
+        left.addRow("Source IP", self._src_ip)
+        left.addRow("Destination IP", self._dst_ip)
+        left.addRow("TCP flags", self._tcp_flags)
+
+        right = form_layout()
+        right.addRow("Source port", self._src_port)
+        right.addRow("Destination port", self._dst_port)
+        right.addRow("Source MAC", self._src_mac)
+        right.addRow("Destination MAC", self._dst_mac)
+        right.addRow("TTL", self._ttl)
+
+        fields_columns = QHBoxLayout(fields_box)
+        fields_columns.setSpacing(SPACE * 3)
+        fields_columns.addLayout(left, stretch=1)
+        fields_columns.addLayout(right, stretch=1)
 
         self._mode_zeros = QRadioButton("Zeros")
         self._mode_ones = QRadioButton("Ones")
@@ -79,8 +90,10 @@ class CustomPacketPanel(QWidget):
             button.toggled.connect(self._on_mode_changed)
 
         mode_row = QHBoxLayout()
+        mode_row.setSpacing(SPACE * 2)
         for button in (self._mode_zeros, self._mode_ones, self._mode_random, self._mode_custom):
             mode_row.addWidget(button)
+        mode_row.addStretch(1)
 
         self._size_spin = QSpinBox()
         self._size_spin.setRange(0, 65507)
@@ -99,36 +112,53 @@ class CustomPacketPanel(QWidget):
 
         self._payload_stack = QStackedWidget()
         size_widget = QWidget()
-        QFormLayout(size_widget).addRow("Size (bytes)", self._size_spin)
+        size_form = form_layout()
+        size_form.addRow("Size (bytes)", self._size_spin)
+        QVBoxLayout(size_widget).addLayout(size_form)
         custom_widget = QWidget()
-        custom_form = QFormLayout(custom_widget)
+        custom_form = form_layout()
         custom_form.addRow("Text", self._custom_text)
         custom_form.addRow("Hex", self._custom_hex)
         custom_form.addRow("File", file_row_container)
+        QVBoxLayout(custom_widget).addLayout(custom_form)
+        for holder in (size_widget, custom_widget):
+            holder.layout().setContentsMargins(0, 0, 0, 0)
         self._payload_stack.addWidget(size_widget)
         self._payload_stack.addWidget(custom_widget)
 
         payload_box = QGroupBox("L7 payload")
         payload_layout = QVBoxLayout(payload_box)
+        payload_layout.setSpacing(SPACE + 2)
         payload_layout.addLayout(mode_row)
         payload_layout.addWidget(self._payload_stack)
 
-        send_button = QPushButton("Send")
+        send_button = QPushButton("Send packet")
+        send_button.setProperty("accent", "true")
         send_button.clicked.connect(self._on_send)
+        send_row = QHBoxLayout()
+        send_row.addStretch(1)
+        send_row.addWidget(send_button)
 
+        reply_label = QLabel("Reply")
+        reply_label.setProperty("role", "caption")
         self._response_view = QPlainTextEdit()
         self._response_view.setReadOnly(True)
         self._response_view.setMinimumHeight(120)
+        self._response_view.setProperty("role", "console")
+        self._response_view.setPlaceholderText("The reply to a sent packet is shown here.")
 
         # Everything lives inside a scroll area with a bounded content width.
         # Without this, maximizing the window stretches every field across the
         # full screen width and vertically distorts the form rows.
         content = QWidget()
-        content.setMaximumWidth(760)
+        content.setMaximumWidth(820)
         content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(SPACE + 2, SPACE * 2, SPACE + 2, SPACE + 2)
+        content_layout.setSpacing(SPACE + 4)
         content_layout.addWidget(fields_box)
         content_layout.addWidget(payload_box)
-        content_layout.addWidget(send_button)
+        content_layout.addLayout(send_row)
+        content_layout.addWidget(reply_label)
         content_layout.addWidget(self._response_view)
         content_layout.addStretch(1)
 
@@ -207,3 +237,4 @@ class CustomPacketPanel(QWidget):
             self._response_view.setPlainText(
                 f"{type(exc).__name__}: {exc}\n\nThe details were written to the log."
             )
+

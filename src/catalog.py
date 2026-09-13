@@ -14,7 +14,7 @@ the catalog), so the two can't silently diverge.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src.config import Role
 
@@ -32,8 +32,11 @@ class TestSpec:
     title: str
     description: str
     rfc: str
-    roles: tuple[Role, ...] = CLIENT
-    markers: tuple[str, ...] = ()
+    # kw_only: at ~74 call sites below, `roles`/`markers` are same-typed
+    # tuples that are easy to transpose or misattribute when passed
+    # positionally — forcing keyword args makes each call site self-document.
+    roles: tuple[Role, ...] = field(default=CLIENT, kw_only=True)
+    markers: tuple[str, ...] = field(default=(), kw_only=True)
 
     @property
     def rel_path(self) -> str:
@@ -59,70 +62,70 @@ CATALOG: list[TestSpec] = [
         "TTL expiry → ICMP Time Exceeded",
         "Sends a datagram with TTL=1 and expects the hop that decrements it to zero to "
         "discard it and return an ICMP Time Exceeded (type 11), rather than forwarding it.",
-        "RFC 791 §3.2, RFC 792", CLIENT, ("ip",),
+        "RFC 791 §3.2, RFC 792", roles=CLIENT, markers=("ip",),
     ),
     TestSpec(
         "ip", None, "test_ip_header_validation", "test_icmp_echo_round_trip_baseline",
         "Baseline echo round-trip",
         "Confirms a normally-formed packet with a correct checksum round-trips (ICMP echo → "
         "reply) before the malformed-header tests run. A sanity baseline, not an RFC edge case.",
-        "RFC 792", CLIENT, ("ip",),
+        "RFC 792", roles=CLIENT, markers=("ip",),
     ),
     TestSpec(
         "ip", None, "test_ip_fragmentation", "test_fragmented_icmp_echo_reassembles_correctly",
         "Fragment reassembly",
         "Splits an oversized ICMP payload into multiple IP fragments and verifies the DUT "
         "reassembles them before ICMP processing (proven by a valid echo reply).",
-        "RFC 791 §3.2", CLIENT, ("ip",),
+        "RFC 791 §3.2", roles=CLIENT, markers=("ip",),
     ),
     TestSpec(
         "ip", None, "test_ip_fragmentation", "test_overlapping_fragments_teardrop_do_not_crash_dut",
         "Teardrop (overlapping fragments)",
         "Sends two IP fragments with overlapping offsets (the Teardrop attack). A hardened "
         "stack must discard the malformed pair rather than fault; proven by a follow-up ping.",
-        "— (vulnerability: Teardrop)", CLIENT, ("ip", "vuln"),
+        "— (vulnerability: Teardrop)", roles=CLIENT, markers=("ip", "vuln"),
     ),
     TestSpec(
         "ip", None, "test_ip_malformed", "test_oversized_reassembled_datagram_ping_of_death",
         "Ping of Death (oversized reassembly)",
         "Sends fragments whose reassembled size exceeds the 65535-byte IP maximum and verifies "
         "the DUT rejects them instead of overflowing a buffer / crashing.",
-        "RFC 791 (max datagram size) — vulnerability", CLIENT, ("ip", "vuln", "slow"),
+        "RFC 791 (max datagram size) — vulnerability", roles=CLIENT, markers=("ip", "vuln", "slow"),
     ),
     TestSpec(
         "ip", None, "test_ip_malformed", "test_invalid_ihl_is_discarded",
         "Invalid IHL discard",
         "Sends a packet whose IHL is below the 20-byte minimum header and verifies it's "
         "discarded without wedging the DUT.",
-        "RFC 791 §3.1", CLIENT, ("ip",),
+        "RFC 791 §3.1", roles=CLIENT, markers=("ip",),
     ),
     TestSpec(
         "ip", None, "test_ip_checksum", "test_bad_ip_checksum_is_discarded",
         "Bad IP header checksum discard",
         "Sends an IP packet with a deliberately wrong header checksum and verifies the DUT "
         "silently discards it (no reply), per RFC 791's mandatory header checksum.",
-        "RFC 791 §3.1 (Header Checksum)", CLIENT, ("ip",),
+        "RFC 791 §3.1 (Header Checksum)", roles=CLIENT, markers=("ip",),
     ),
     TestSpec(
         "ip", None, "test_ip_options", "test_ip_record_route_option_is_handled",
         "IP Record Route option",
         "Sends an echo carrying a Record Route IP option (larger IHL) and verifies the DUT uses "
         "IHL to locate the payload and still replies — rather than assuming a 20-byte header.",
-        "RFC 791 §3.1 (Options)", CLIENT, ("ip",),
+        "RFC 791 §3.1 (Options)", roles=CLIENT, markers=("ip",),
     ),
     TestSpec(
         "ip", None, "test_ip_options", "test_ip_nop_option_padding_is_handled",
         "IP NOP option padding",
         "Sends an echo padded with several No-Operation IP options and verifies it's processed "
         "normally.",
-        "RFC 791 §3.1 (Options)", CLIENT, ("ip",),
+        "RFC 791 §3.1 (Options)", roles=CLIENT, markers=("ip",),
     ),
     TestSpec(
         "ip", None, "test_ip_options", "test_ip_reserved_flag_bit_is_ignored",
         "Reserved IP flag bit ignored",
         "Sets the reserved high-order IP flag bit and verifies the DUT ignores it (still replies) "
         "rather than dropping the datagram.",
-        "RFC 791 §3.1 (Flags) — edge case", CLIENT, ("ip",),
+        "RFC 791 §3.1 (Flags) — edge case", roles=CLIENT, markers=("ip",),
     ),
     # ---- UDP (RFC 768) ----------------------------------------------------
     TestSpec(
@@ -130,56 +133,56 @@ CATALOG: list[TestSpec] = [
         "UDP length field",
         "Local check that the builder sets the UDP length to 8 (header) + payload bytes, per "
         "RFC 768's Length field definition.",
-        "RFC 768", CLIENT, ("udp",),
+        "RFC 768", roles=CLIENT, markers=("udp",),
     ),
     TestSpec(
         "udp", None, "test_udp_header_validation", "test_udp_datagram_reaches_dut_with_correct_checksum",
         "UDP checksum acceptance",
         "Sends a correctly-checksummed datagram and expects a response (e.g. ICMP port "
         "unreachable), proving it wasn't dropped during checksum validation.",
-        "RFC 768 (Checksum)", CLIENT, ("udp",),
+        "RFC 768 (Checksum)", roles=CLIENT, markers=("udp",),
     ),
     TestSpec(
         "udp", None, "test_udp_header_validation", "test_zero_checksum_datagram_is_accepted",
         "UDP zero-checksum (optional) accepted",
         "RFC 768 allows an all-zero checksum to mean 'no checksum computed'. Sends such a "
         "datagram and verifies the DUT still accepts and processes it.",
-        "RFC 768 (Checksum optional)", CLIENT, ("udp",),
+        "RFC 768 (Checksum optional)", roles=CLIENT, markers=("udp",),
     ),
     TestSpec(
         "udp", None, "test_udp_port_unreachable", "test_closed_port_elicits_icmp_port_unreachable",
         "Closed port → ICMP Port Unreachable",
         "Sends a datagram to a port with no listener and expects ICMP Destination Unreachable, "
         "code 3 (Port Unreachable).",
-        "RFC 792", CLIENT, ("udp",),
+        "RFC 792", roles=CLIENT, markers=("udp",),
     ),
     TestSpec(
         "udp", None, "test_udp_fuzzing", "test_udp_survives_edge_case_payload_sizes",
         "Payload-size robustness",
         "Sends zero-fill payloads at boundary sizes (0, 1, 512, 1472, 65507 bytes) and verifies "
         "the DUT stays responsive after each.",
-        "— (robustness)", CLIENT, ("udp", "slow"),
+        "— (robustness)", roles=CLIENT, markers=("udp", "slow"),
     ),
     TestSpec(
         "udp", None, "test_udp_echo_server", "test_dut_sends_udp_and_receives_echo",
         "SERVER: echo a DUT-sent datagram",
         "The suite acts as a UDP echo server: it waits for the DUT to send a datagram to it, "
         "echoes the payload back, and validates the DUT actually initiated the transfer.",
-        "RFC 768", SERVER, ("udp",),
+        "RFC 768", roles=SERVER, markers=("udp",),
     ),
     TestSpec(
         "udp", None, "test_udp_edge_cases", "test_udp_length_below_minimum_is_discarded",
         "UDP length below minimum discarded",
         "Sends a datagram whose length field is below the 8-byte header minimum and verifies the "
         "DUT discards it without crashing (a follow-up datagram still gets a response).",
-        "RFC 768 (Length) — edge case", CLIENT, ("udp",),
+        "RFC 768 (Length) — edge case", roles=CLIENT, markers=("udp",),
     ),
     TestSpec(
         "udp", None, "test_udp_edge_cases", "test_udp_source_port_zero_is_handled",
         "UDP source port 0",
         "Sends a datagram with source port 0 (valid, meaning 'no reply port') and verifies the "
         "DUT still processes it without crashing.",
-        "RFC 768 (Source Port) — edge case", CLIENT, ("udp",),
+        "RFC 768 (Source Port) — edge case", roles=CLIENT, markers=("udp",),
     ),
     # ---- ICMP (RFC 792) ---------------------------------------------------
     TestSpec(
@@ -187,35 +190,35 @@ CATALOG: list[TestSpec] = [
         "CLIENT: Echo Request → Reply",
         "The suite sends an ICMP Echo Request (type 8) to the DUT and expects a matching Echo "
         "Reply (type 0) with the same id/seq and payload.",
-        "RFC 792 (Echo/Echo Reply)", CLIENT, ("icmp",),
+        "RFC 792 (Echo/Echo Reply)", roles=CLIENT, markers=("icmp",),
     ),
     TestSpec(
         "icmp", None, "test_icmp_echo", "test_server_responds_to_dut_echo",
         "SERVER: answer a DUT-initiated ping",
         "The suite waits for the DUT to send it an Echo Request, replies with an Echo Reply, "
         "and validates the DUT initiated the ping — exercising the DUT's ping-client path.",
-        "RFC 792 (Echo/Echo Reply)", SERVER, ("icmp",),
+        "RFC 792 (Echo/Echo Reply)", roles=SERVER, markers=("icmp",),
     ),
     TestSpec(
         "icmp", None, "test_icmp_errors", "test_truncated_icmp_does_not_crash_dut",
         "Truncated ICMP robustness",
         "Sends a malformed/truncated ICMP message and verifies the DUT discards it without "
         "crashing (proven by a follow-up echo still succeeding).",
-        "RFC 792 — robustness", CLIENT, ("icmp", "vuln"),
+        "RFC 792 — robustness", roles=CLIENT, markers=("icmp", "vuln"),
     ),
     # ---- TCP / SYN (RFC 9293) --------------------------------------------
     TestSpec(
         "tcp", "syn", "test_three_way_handshake", "test_syn_elicits_syn_ack",
         "CLIENT: SYN → SYN-ACK",
         "The suite sends a SYN to an open port and expects the DUT to answer SYN-ACK.",
-        "RFC 9293 §3.5", CLIENT, ("tcp", "syn"),
+        "RFC 9293 §3.5", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_three_way_handshake", "test_full_handshake_completes_and_ack_is_accepted",
         "CLIENT: full handshake to ESTABLISHED",
         "Completes SYN → SYN-ACK → ACK and confirms the connection reaches ESTABLISHED (no "
         "stray RST on a follow-up segment).",
-        "RFC 9293 §3.5", CLIENT, ("tcp", "syn"),
+        "RFC 9293 §3.5", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_server_handshake", "test_dut_completes_handshake_it_initiated",
@@ -223,7 +226,7 @@ CATALOG: list[TestSpec] = [
         "The suite listens as a TCP server: it waits for the DUT to send a SYN, replies "
         "SYN-ACK, and validates the DUT completes the handshake with a final ACK — exercising "
         "the DUT's active-open (connect) path.",
-        "RFC 9293 §3.5", SERVER, ("tcp", "syn"),
+        "RFC 9293 §3.5", roles=SERVER, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_tcp_options", "test_syn_with_mss_option_is_accepted",
@@ -231,61 +234,61 @@ CATALOG: list[TestSpec] = [
         "Sends a SYN carrying a Maximum Segment Size option and verifies the DUT still "
         "establishes the connection (SYN-ACK), i.e. it parses TCP options rather than "
         "rejecting an optioned SYN.",
-        "RFC 9293 §3.1, RFC 6691 (MSS)", CLIENT, ("tcp", "syn"),
+        "RFC 9293 §3.1, RFC 6691 (MSS)", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_tcp_options", "test_syn_with_window_scale_option_is_accepted",
         "Window Scale option",
         "Sends a SYN with a Window Scale option (kind 3) and verifies the DUT accepts it "
         "(SYN-ACK), enabling windows beyond 64 KiB.",
-        "RFC 7323 §2", CLIENT, ("tcp", "syn"),
+        "RFC 7323 §2", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_tcp_options", "test_syn_with_timestamp_option_is_accepted",
         "Timestamps option",
         "Sends a SYN with a TCP Timestamps option (kind 8) and verifies the DUT accepts it.",
-        "RFC 7323 §3", CLIENT, ("tcp", "syn"),
+        "RFC 7323 §3", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_tcp_options", "test_syn_with_sack_permitted_option_is_accepted",
         "SACK-Permitted option",
         "Sends a SYN with the SACK-Permitted option (kind 4) and verifies the DUT accepts it.",
-        "RFC 2018", CLIENT, ("tcp", "syn"),
+        "RFC 2018", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_tcp_options", "test_syn_with_combined_options_is_accepted",
         "Combined options list",
         "Sends a realistic SYN with MSS + SACK-permitted + Timestamps + NOP padding + Window "
         "Scale together and verifies the DUT parses the whole list and still establishes.",
-        "RFC 9293 §3.1, RFC 7323, RFC 2018", CLIENT, ("tcp", "syn"),
+        "RFC 9293 §3.1, RFC 7323, RFC 2018", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_tcp_options", "test_syn_with_unknown_option_is_ignored",
         "Unknown option ignored",
         "Sends a SYN with an unrecognised option kind and verifies the DUT skips it via its "
         "length field (still SYN-ACKs) rather than rejecting the segment.",
-        "RFC 9293 §3.1 — edge case", CLIENT, ("tcp", "syn"),
+        "RFC 9293 §3.1 — edge case", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_syn_flood", "test_syn_flood_does_not_exhaust_connection_table",
         "SYN flood resilience",
         "Sends a burst of un-ACKed SYNs (half-open connections) then verifies a legitimate "
         "handshake still completes — i.e. the backlog / SYN-cookie handling holds up.",
-        "— (vulnerability: SYN flood)", CLIENT, ("tcp", "syn", "vuln", "slow"),
+        "— (vulnerability: SYN flood)", roles=CLIENT, markers=("tcp", "syn", "vuln", "slow"),
     ),
     TestSpec(
         "tcp", "syn", "test_sequence_prediction", "test_isn_is_not_fixed_or_linearly_incrementing",
         "ISN unpredictability",
         "Samples several SYN-ACK ISNs and checks they are neither constant nor incrementing by "
         "a fixed delta — the naive predictable-ISN vulnerability class.",
-        "RFC 6528", CLIENT, ("tcp", "syn"),
+        "RFC 6528", roles=CLIENT, markers=("tcp", "syn"),
     ),
     TestSpec(
         "tcp", "syn", "test_invalid_syn_flags", "test_contradictory_flag_combination_does_not_establish_connection",
         "Invalid flag combinations",
         "Sends SYN+FIN, SYN+RST, NULL, and Xmas flag combinations and verifies none of them are "
         "treated as a valid connection request (no bare SYN-ACK).",
-        "— (hardening / scan resistance)", CLIENT, ("tcp", "syn"),
+        "— (hardening / scan resistance)", roles=CLIENT, markers=("tcp", "syn"),
     ),
     # ---- TCP / state machine ---------------------------------------------
     TestSpec(
@@ -293,27 +296,27 @@ CATALOG: list[TestSpec] = [
         "FIN acknowledgement",
         "Sends a FIN on an ESTABLISHED connection and verifies the DUT ACKs it (moving toward "
         "CLOSE-WAIT).",
-        "RFC 9293 §3.6", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.6", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_rst_handling", "test_ack_to_closed_port_elicits_rst",
         "RST for closed-port segment",
         "Sends a segment to a closed port and verifies the DUT answers with RST.",
-        "RFC 9293 §3.10.7.1", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.1", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_rst_handling", "test_established_connection_accepts_valid_rst",
         "Valid RST aborts connection",
         "Sends an in-window RST on an ESTABLISHED connection and verifies it's aborted "
         "(follow-up traffic is no longer acknowledged normally).",
-        "RFC 9293 §3.5.2", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.5.2", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_simultaneous_open_close", "test_fin_before_peer_fin_is_still_acknowledged",
         "Simultaneous-close ordering",
         "Sends our FIN before observing the DUT's FIN and verifies it's still ACKed — the DUT "
         "doesn't require a specific close ordering.",
-        "RFC 9293 §3.5.3", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.5.3", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_rst_edge_cases", "test_out_of_window_rst_is_ignored",
@@ -321,133 +324,133 @@ CATALOG: list[TestSpec] = [
         "Sends a RST with a sequence number well outside the receive window on an ESTABLISHED "
         "connection and verifies the DUT does NOT tear the connection down — blind RST "
         "acceptance enables off-path reset attacks.",
-        "RFC 5961 §3 (also RFC 9293 §3.10.7.1)", CLIENT, ("tcp", "state_machine"),
+        "RFC 5961 §3 (also RFC 9293 §3.10.7.1)", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_established_segment_validation", "test_in_window_data_is_cumulatively_acknowledged",
         "In-window data → cumulative ACK",
         "Delivers valid in-window data on an ESTABLISHED connection and verifies the DUT's ACK "
         "advances to SEG.SEQ + SEG.LEN — the cumulative-acknowledgement rule.",
-        "RFC 9293 §3.10.7.4, §3.8", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4, §3.8", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_established_segment_validation", "test_old_duplicate_data_is_acked_not_reset",
         "Old duplicate segment → ACK, not RST",
         "Sends a segment wholly to the left of RCV.NXT (already-received data) and verifies the "
         "DUT drops it with an ACK rather than resetting — the normal retransmission-crossing-ACK case.",
-        "RFC 9293 §3.10.7.4 (step 1)", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4 (step 1)", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_established_segment_validation", "test_future_out_of_window_data_does_not_break_connection",
         "Future out-of-window data dropped",
         "Sends data beyond the right window edge and verifies the DUT neither delivers it nor "
         "resets — its ACK must still report the real RCV.NXT, not the bogus sequence.",
-        "RFC 9293 §3.10.7.4 (step 1)", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4 (step 1)", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_established_segment_validation", "test_segment_with_ack_bit_off_is_silently_dropped",
         "ACK bit off → silent drop",
         "Sends a data segment with the ACK flag clear on an ESTABLISHED connection and verifies "
         "the DUT drops it silently (no RST, connection intact), per the §3.10.7.4 ACK check.",
-        "RFC 9293 §3.10.7.4 (step 4)", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4 (step 4)", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_established_segment_validation", "test_ack_for_unsent_data_does_not_reset",
         "ACK for unsent data → ACK, not RST",
         "Sends a segment acknowledging data the DUT never sent (SEG.ACK > SND.NXT) and verifies "
         "the DUT answers with an ACK and drops it — a blind attacker must not reset this way.",
-        "RFC 5961 §5", CLIENT, ("tcp", "state_machine"),
+        "RFC 5961 §5", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_established_segment_validation", "test_keepalive_probe_is_answered_with_current_ack",
         "Keep-alive probe answered",
         "Sends a keep-alive probe (SEG.SEQ = SND.NXT-1, no data) and verifies the DUT answers "
         "with an ACK for RCV.NXT without treating the already-ACKed byte as new data.",
-        "RFC 1122 §4.2.3.6", CLIENT, ("tcp", "state_machine"),
+        "RFC 1122 §4.2.3.6", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_challenge_ack", "test_in_window_non_exact_rst_draws_challenge_ack_only",
         "In-window non-exact RST → challenge ACK",
         "Sends a RST inside the receive window but not exactly at RCV.NXT and verifies the DUT "
         "does not tear the connection down — RFC 5961 requires a challenge ACK instead.",
-        "RFC 5961 §3", CLIENT, ("tcp", "state_machine"),
+        "RFC 5961 §3", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_challenge_ack", "test_in_window_syn_draws_challenge_ack_not_reset",
         "In-window SYN → challenge ACK",
         "Sends a SYN on an ESTABLISHED connection and verifies the DUT does not silently reset "
         "it — a DUT that answers with RST is vulnerable to a blind-SYN reset.",
-        "RFC 5961 §4", CLIENT, ("tcp", "state_machine"),
+        "RFC 5961 §4", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_challenge_ack", "test_exact_rcv_nxt_syn_is_still_not_a_reset_trigger",
         "Exact-RCV.NXT SYN is not a reset trigger",
         "Sends a SYN whose sequence number is exactly RCV.NXT and verifies the DUT still only "
         "challenges rather than tearing down without a challenge-ACK confirmation.",
-        "RFC 5961 §4", CLIENT, ("tcp", "state_machine"),
+        "RFC 5961 §4", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_challenge_ack", "test_ack_arriving_on_listen_port_elicits_rst",
         "Bare ACK in LISTEN → RST",
         "Sends a bare ACK to a listening port (no connection) and verifies the DUT answers with "
         "<SEQ=SEG.ACK><CTL=RST>, per the LISTEN-state first check.",
-        "RFC 9293 §3.10.7.3", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.3", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_challenge_ack", "test_data_segment_to_listen_port_is_not_accepted",
         "Data segment in LISTEN not accepted",
         "Sends a segment with neither SYN nor ACK to a listening port and verifies it never "
         "produces a SYN-ACK — the DUT must not accept data as a connection request.",
-        "RFC 9293 §3.10.7.3", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.3", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_syn_received_state", "test_duplicate_syn_in_syn_received_retransmits_same_syn_ack",
         "Duplicate SYN in SYN-RECEIVED",
         "Retransmits an identical SYN while the DUT is in SYN-RECEIVED and verifies it resends "
         "the same SYN-ACK with the same ISN — a new ISN would break the real client's handshake.",
-        "RFC 9293 §3.10.7.4", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_syn_received_state", "test_rst_in_syn_received_aborts_half_open_connection",
         "RST in SYN-RECEIVED aborts half-open",
         "Sends a RST at RCV.NXT while the DUT is in SYN-RECEIVED and verifies the TCB is deleted "
         "— the aborted handshake's final ACK afterwards is answered with RST.",
-        "RFC 9293 §3.10.7.4 (SYN-RECEIVED, RST check)", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4 (SYN-RECEIVED, RST check)", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_syn_received_state", "test_wrong_seq_ack_does_not_complete_handshake",
         "Wrong final-ACK ack number rejected",
         "Sends the handshake's final ACK with an ack number that does not acknowledge the DUT's "
         "ISN and verifies the connection does not reach ESTABLISHED (RST, no data carried).",
-        "RFC 9293 §3.10.7.4 (SYN-RECEIVED, ACK check)", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4 (SYN-RECEIVED, ACK check)", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_fin_close_transitions", "test_out_of_window_fin_is_not_processed",
         "Out-of-window FIN not processed",
         "Sends a FIN whose sequence number is outside the receive window and verifies the DUT "
         "does not acknowledge the phantom FIN's sequence or move to CLOSE-WAIT on it.",
-        "RFC 9293 §3.10.7.4 (step 1)", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4 (step 1)", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_fin_close_transitions", "test_retransmitted_fin_is_reacknowledged",
         "Retransmitted FIN re-acknowledged",
         "After the DUT ACKs our FIN, retransmits the identical FIN and verifies it is ACKed "
         "again (FIN.SEQ+1) rather than drawing a RST — ACK-of-FIN is idempotent.",
-        "RFC 9293 §3.6", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.6", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_fin_close_transitions", "test_data_after_our_fin_is_dropped_not_reset",
         "Data after our FIN dropped",
         "Sends data past FIN.SEQ+1 (bytes outside our sequence space) after our FIN and verifies "
         "the DUT drops it with an ACK rather than resetting the connection.",
-        "RFC 9293 §3.10.7.4", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.10.7.4", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     TestSpec(
         "tcp", "state_machine", "test_fin_close_transitions", "test_close_wait_still_answers_bare_ack",
         "CLOSE-WAIT still answers bare ACK",
         "After our FIN moves the DUT to CLOSE-WAIT, sends a bare in-window ACK and verifies the "
         "DUT does not reset — CLOSE-WAIT is a fully open half-connection.",
-        "RFC 9293 §3.6", CLIENT, ("tcp", "state_machine"),
+        "RFC 9293 §3.6", roles=CLIENT, markers=("tcp", "state_machine"),
     ),
     # ---- TCP / congestion -------------------------------------------------
     TestSpec(
@@ -456,35 +459,35 @@ CATALOG: list[TestSpec] = [
         "Compares the DUT's advertised receive window against the selected target-stack "
         "profile's reference range. Informational — a mismatch flags a stack-characteristic "
         "difference, not an RFC violation.",
-        "RFC 9293 §3.7.1 (informational)", CLIENT, ("tcp", "congestion"),
+        "RFC 9293 §3.7.1 (informational)", roles=CLIENT, markers=("tcp", "congestion"),
     ),
     TestSpec(
         "tcp", "congestion", "test_retransmission_timeout", "test_unacked_syn_ack_is_retransmitted",
         "SYN-ACK retransmission",
         "Withholds the final ACK and verifies the DUT retransmits its SYN-ACK per the RFC 6298 "
         "retransmission timer.",
-        "RFC 6298", CLIENT, ("tcp", "congestion", "slow"),
+        "RFC 6298", roles=CLIENT, markers=("tcp", "congestion", "slow"),
     ),
     TestSpec(
         "tcp", "congestion", "test_slow_start", "test_congestion_window_grows_across_initial_round_trips",
         "Slow start (placeholder)",
         "Placeholder — genuine cwnd-growth measurement needs a DUT-side data stream this "
         "generic harness can't trigger. Skipped; see the module docstring.",
-        "RFC 5681", CLIENT, ("tcp", "congestion"),
+        "RFC 5681", roles=CLIENT, markers=("tcp", "congestion"),
     ),
     TestSpec(
         "tcp", "congestion", "test_zero_window", "test_zero_window_advertisement_does_not_break_connection",
         "Zero window advertisement",
         "Completes a handshake, advertises a zero receive window, and verifies the DUT treats it "
         "as a legal flow-control state (no RST) — it must stop sending, not abort.",
-        "RFC 9293 §3.8.6", CLIENT, ("tcp", "congestion"),
+        "RFC 9293 §3.8.6", roles=CLIENT, markers=("tcp", "congestion"),
     ),
     TestSpec(
         "tcp", "congestion", "test_zero_window", "test_window_reopen_after_zero_is_accepted",
         "Window reopen after zero",
         "After advertising a zero window, sends a window update reopening it and verifies the "
         "connection stays alive (no RST) — the DUT accepts window updates.",
-        "RFC 9293 §3.8.6.2", CLIENT, ("tcp", "congestion"),
+        "RFC 9293 §3.8.6.2", roles=CLIENT, markers=("tcp", "congestion"),
     ),
     TestSpec(
         "tcp", "congestion", "test_zero_window", "test_zero_window_persist_probe_from_dut",
@@ -492,7 +495,7 @@ CATALOG: list[TestSpec] = [
         "The suite accepts the DUT's connection but advertises a zero window in its SYN-ACK; a "
         "DUT with data to send must emit a zero-window (persist) probe rather than flooding or "
         "stalling. Requires the DUT to have data queued to send.",
-        "RFC 1122 §4.2.2.17", SERVER, ("tcp", "congestion", "slow"),
+        "RFC 1122 §4.2.2.17", roles=SERVER, markers=("tcp", "congestion", "slow"),
     ),
     # ---- Proxy DUT (two-instance: client here, backend elsewhere) ---------
     TestSpec(
@@ -501,84 +504,84 @@ CATALOG: list[TestSpec] = [
         "Sends a unique payload through the proxy to the backend instance and verifies the echo "
         "returns identical. Proves the DUT accepted the front connection (its server side), "
         "dialled the origin (its client side), and relayed faithfully both ways.",
-        "RFC 9293 §3.5, §3.7", CLIENT, ("proxy",),
+        "RFC 9293 §3.5, §3.7", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_relay", "test_proxy_relay_is_eight_bit_clean",
         "Octet-transparent relay",
         "Relays every octet 0x00-0xFF plus embedded CRLF and a fake CONNECT line, verifying the "
         "proxy forwards blindly instead of scanning or rewriting an established tunnel.",
-        "RFC 9110 §9.3.6 (blind forwarding)", CLIENT, ("proxy",),
+        "RFC 9110 §9.3.6 (blind forwarding)", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_relay", "test_proxy_relays_payload_larger_than_one_segment",
         "Multi-segment payload relay",
         "Relays a 128 KiB payload, exercising the DUT's buffering and segmentation across both "
         "legs; the byte stream must arrive intact and in order.",
-        "RFC 9293 §3.7", CLIENT, ("proxy",),
+        "RFC 9293 §3.7", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_relay", "test_proxy_relays_successive_exchanges_on_one_connection",
         "Successive exchanges on one connection",
         "Runs several request/response exchanges over a single relayed connection to confirm the "
         "DUT does not desynchronise or interleave the stream.",
-        "RFC 9293 §3.7", CLIENT, ("proxy",),
+        "RFC 9293 §3.7", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_lifecycle", "test_client_half_close_propagates_and_returns_eof",
         "Half-close propagation",
         "Half-closes the client side and verifies the FIN reaches the origin and the origin's "
         "close is relayed back as a clean EOF — the proxy must bridge shutdown across both legs.",
-        "RFC 9293 §3.6", CLIENT, ("proxy",),
+        "RFC 9293 §3.6", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_lifecycle", "test_data_sent_before_close_is_fully_flushed",
         "Flush before close",
         "Writes a payload immediately before half-closing and verifies nothing is truncated — a "
         "proxy that closes the origin leg without flushing silently loses data.",
-        "RFC 9293 §3.6", CLIENT, ("proxy",),
+        "RFC 9293 §3.6", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_http_connect", "test_connect_request_establishes_tunnel_with_2xx",
         "CONNECT establishes tunnel",
         "Sends an authority-form CONNECT and requires a 2xx response, then confirms the tunnel "
         "actually carries data. Exercises the DUT's server-side HTTP proxy behaviour.",
-        "RFC 9110 §9.3.6, RFC 9112 §3.2.3", CLIENT, ("proxy",),
+        "RFC 9110 §9.3.6, RFC 9112 §3.2.3", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_http_connect", "test_2xx_connect_response_omits_framing_headers",
         "No framing headers on 2xx CONNECT",
         "A 2xx response to CONNECT must not carry Content-Length or Transfer-Encoding — the "
         "tunnel has no message body and framing headers would desynchronise the stream.",
-        "RFC 9110 §9.3.6", CLIENT, ("proxy",),
+        "RFC 9110 §9.3.6", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_http_connect", "test_connect_to_unreachable_origin_is_not_reported_as_success",
         "Unreachable origin is not 2xx",
         "Requests a tunnel to a closed origin port and verifies the proxy reports an error status "
         "rather than falsely signalling an established tunnel.",
-        "RFC 9110 §9.3.6", CLIENT, ("proxy",),
+        "RFC 9110 §9.3.6", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_socks5", "test_socks5_negotiation_and_connect_succeed",
         "SOCKS5 negotiate + CONNECT",
         "Runs the SOCKS5 greeting, method selection and CONNECT request, requiring REP=0x00, then "
         "confirms the negotiated tunnel relays data.",
-        "RFC 1928 §3, §4, §6", CLIENT, ("proxy",),
+        "RFC 1928 §3, §4, §6", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_socks5", "test_socks5_never_selects_an_unoffered_method",
         "SOCKS5 selects an offered method",
         "The server must choose one of the methods the client offered (or 0xFF); selecting an "
         "unoffered method is non-conformant.",
-        "RFC 1928 §3", CLIENT, ("proxy",),
+        "RFC 1928 §3", roles=CLIENT, markers=("proxy",),
     ),
     TestSpec(
         "proxy", None, "test_proxy_socks5", "test_socks5_connect_to_closed_origin_returns_failure_reply",
         "SOCKS5 failure reply for closed origin",
         "CONNECT to an origin that is not listening must be answered with a non-zero REP drawn "
         "from the RFC-defined codes, never reported as success.",
-        "RFC 1928 §6", CLIENT, ("proxy",),
+        "RFC 1928 §6", roles=CLIENT, markers=("proxy",),
     ),
 ]
 

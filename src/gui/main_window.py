@@ -274,7 +274,7 @@ class MainWindow(QMainWindow):
 
         try:
             config = self._current_dut_config()
-            if not self._report_topology(config):
+            if not self._report_and_validate_topology(config):
                 return
 
             if not self._preflight_and_report(config):
@@ -300,12 +300,16 @@ class MainWindow(QMainWindow):
             )
         self._controller.start(request)
 
-    def _report_topology(self, config: DUTConfig) -> bool:
+    def _report_and_validate_topology(self, config: DUTConfig) -> bool:
         """Echo what the leg/port selectors resolved to and validate them.
 
         Returns whether the run may proceed. The CLI's counterpart is
         cli.main._resolve_topology, which applies the same rules from
         src.config and raises click.UsageError instead of logging.
+
+        Renamed from `_report_topology` (was reporting-only in name but also
+        gates whether `_on_run_clicked` proceeds) to match the
+        `_preflight_and_report` naming shape already used alongside it.
         """
         leg = config.proxy_leg
         if leg is not None:

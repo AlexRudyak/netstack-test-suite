@@ -8,7 +8,7 @@
 ; install (Start Menu + optional desktop shortcut), then runs the app.
 
 #define AppName "Netstack Test Suite"
-#define AppVersion "0.1.0"
+#define AppVersion "0.2.0"
 #define AppExe "NetstackTestSuite.exe"
 
 [Setup]
@@ -27,6 +27,10 @@ SolidCompression=yes
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+; The installer's own icon, and the one Add/Remove Programs lists. The
+; shortcuts take theirs from the exe, which carries the same mark.
+SetupIconFile=icon.ico
+UninstallDisplayIcon={app}\{#AppExe}
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"

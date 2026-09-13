@@ -25,6 +25,7 @@ def main() -> None:
 
         raise SystemExit(pytest.main(sys.argv[2:]))
 
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     from src import paths
@@ -55,6 +56,12 @@ def main() -> None:
         )
 
     app = QApplication(sys.argv)
+    # Application-wide, so every window and dialog inherits it, and the
+    # task switcher has something to show. On Windows the packaged exe
+    # carries the same mark in its resources (the .ico, via the spec) —
+    # this covers the title bar, the running-from-source case, and Linux,
+    # which has no .ico at all.
+    app.setWindowIcon(QIcon(str(paths.app_icon())))
     # Before the first widget exists: the theme sets the base style and
     # palette, which Qt only applies cleanly to widgets created after it.
     apply_theme(app)

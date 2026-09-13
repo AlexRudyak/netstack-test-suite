@@ -34,3 +34,17 @@ def test_frozen_reports_base_is_next_to_exe(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(paths.sys, "_MEIPASS", str(tmp_path / "extract"), raising=False)
     assert paths.project_root() == Path(str(tmp_path / "extract"))
     assert paths.reports_base() != paths.project_root()
+
+
+def test_app_icon_is_present_and_bundled() -> None:
+    """The window icon must exist on disk under the name the spec bundles.
+
+    Both halves matter: `app_icon()` resolving to a missing file gives a
+    null QIcon and a blank title bar with no error, and the spec bundles
+    this exact relative path — so a move that updates one and not the other
+    only shows up in a packaged build.
+    """
+    icon = paths.app_icon()
+    assert icon.exists(), f"missing app icon: {icon}"
+    assert icon.relative_to(paths.project_root()) == Path("packaging") / "icon.png"
+    assert icon.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

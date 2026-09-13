@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"
+     role="img" aria-label="Netstack Test Suite">
+  <title>Netstack Test Suite</title>
+  <!--
+    The app icon. Source of truth: tools/generate_icon.py renders this into
+    packaging/icon.ico (Windows exe + installer) and packaging/icon.png
+    (the Qt window icon, and what Linux gets, having no .ico).
+
+    The mark is the suite's subject drawn literally: three plates are the
+    protocol layers, and a packet is driven down through them — the layer
+    it has cleared is lit, its path continues faintly through the two
+    below, and it sits on the layer under test. Plates rather than bars on
+    purpose: three horizontal tracks with round heads is the universal
+    settings-slider glyph, and this must not read as one.
+
+    Colours are the app's own tokens (src/design_tokens.py), so the icon,
+    the window and the report read as one product: canvas #10141b,
+    surface #1e2734, accent #38bdf8.
+
+    Legibility rules this has to keep, if it is ever edited: the whole mark
+    is three plate silhouettes and one accent, with no detail narrower than
+    ~10 units — a 16px frame of a 256 grid keeps one pixel in sixteen.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e2734"/>
+      <stop offset="1" stop-color="#0d1118"/>
+    </linearGradient>
+    <linearGradient id="litTop" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.2" stop-color="#38bdf8" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="6" y="6" width="244" height="244" rx="56" fill="url(#tile)"/>
+  <rect x="7.25" y="7.25" width="241.5" height="241.5" rx="54.75"
+        fill="none" stroke="#38bdf8" stroke-opacity="0.18" stroke-width="2.5"/>
+
+  <!-- Layer 1 — cleared, and lit by the packet that cleared it.
+       Each plate is a symmetric isometric diamond (half-width 68,
+       half-height 24) plus a 12-unit edge below it: asymmetric ones read
+       as pyramids, not plates. -->
+  <path d="M60 64 L128 88 L196 64 L196 76 L128 100 L60 76 Z" fill="#0b5c86"/>
+  <path d="M128 40 L196 64 L128 88 L60 64 Z" fill="url(#litTop)"/>
+
+  <!-- Layer 2 — under test: the packet is sitting on it -->
+  <path d="M60 128 L128 152 L196 128 L196 140 L128 164 L60 140 Z" fill="#1b2431"/>
+  <path d="M128 104 L196 128 L128 152 L60 128 Z" fill="#33415a"/>
+
+  <!-- Layer 3 — not reached yet -->
+  <path d="M60 192 L128 216 L196 192 L196 204 L128 228 L60 204 Z" fill="#222b39"/>
+  <path d="M128 168 L196 192 L128 216 L60 192 Z" fill="#404e69"/>
+
+  <!-- The packet, resting on layer 2. Drawn last so it is never occluded,
+       and the one thing in the mark that survives to 16px as a bright
+       point. -->
+  <circle cx="128" cy="116" r="28" fill="url(#glow)"/>
+  <path d="M106 120 L128 132 L150 120 L150 130 L128 142 L106 130 Z" fill="#38bdf8"/>
+  <path d="M128 108 L150 120 L128 132 L106 120 Z" fill="#e0f4fe"/>
+</svg>

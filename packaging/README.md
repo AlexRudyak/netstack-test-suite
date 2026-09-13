@@ -70,6 +70,23 @@ force-loads the report-log plugin with `-p pytest_reportlog.plugin`.
   no UAC-style self-elevation on Linux; the preflight check explains the
   privilege requirement if you launch it unprivileged.
 
+## The app icon
+
+| File | What it is |
+|---|---|
+| `icon.svg`, `icon-small.svg` | The sources. The second is the same mark stripped for 16–24px frames. |
+| `icon.ico` | Multi-resolution Windows icon: embedded in the exe by the spec, and used by the installer (`SetupIconFile`). |
+| `icon.png` | 512px, bundled into the build and set as the Qt window icon at runtime by [`src/gui/app.py`](../src/gui/app.py) via `src.paths.app_icon()`. |
+
+The `.ico` and `.png` are committed, so neither a local build nor the CI
+runners need to render anything. After editing either SVG, regenerate them
+with `python tools/generate_icon.py` and commit the result.
+
+Windows takes the exe's icon from its resources, so the Start Menu and
+desktop shortcuts need nothing of their own. Linux has no icon slot in an
+ELF binary — there the window icon set at runtime is the only one, which is
+why the PNG is bundled as data rather than only used at build time.
+
 ## Building the installer (optional)
 
 The single exe already satisfies "double-click and run". For a formal

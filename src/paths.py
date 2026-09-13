@@ -50,3 +50,16 @@ def reports_base() -> Path:
     if is_frozen():
         return Path(sys.executable).resolve().parent
     return project_root()
+
+
+def app_icon() -> Path:
+    """The window icon, resolved for both source and frozen runs.
+
+    The PNG rather than the .ico: this is the icon Qt paints in the title
+    bar and task switcher on every platform, and Linux — where there is no
+    .ico at all — needs it. The .ico is separate, and is consumed at *build*
+    time by PyInstaller and the installer, not at runtime.
+
+    Bundled into the frozen build under `packaging/` by NetstackTestSuite.spec.
+    """
+    return project_root() / "packaging" / "icon.png"

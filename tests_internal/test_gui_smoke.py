@@ -87,7 +87,10 @@ def test_tree_shows_test_functions_and_details_panel_describes_them(qtbot) -> No
     qtbot.addWidget(panel)
     panel.show_spec(spec)
     assert "SYN-ACK" in panel._description.toPlainText()
-    assert "RFC 9293" in panel._meta.text()
+    # The RFC and roles are chips now, one fact per label — assert over
+    # the visible ones so the panel can gain a chip without this breaking.
+    chips = " ".join(chip.text() for chip in panel._chips if chip.isVisible() or chip.text())
+    assert "RFC 9293" in chips
 
 
 def test_checking_module_cascades_and_yields_module_target(qtbot) -> None:

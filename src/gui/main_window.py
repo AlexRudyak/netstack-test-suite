@@ -10,9 +10,9 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMainWindow,
     QPushButton,
@@ -32,6 +32,7 @@ from src.config import (
     resolve_leg_target,
     resolve_role,
 )
+from src.design_tokens import SPACE
 from src.errors import ConfigurationError
 from src.gui.custom_packet_panel import CustomPacketPanel
 from src.gui.log_panel import LogPanel
@@ -40,6 +41,7 @@ from src.gui.report_panel import ReportPanel
 from src.gui.run_controller import RunController
 from src.gui.test_details_panel import TestDetailsPanel
 from src.gui.test_tree_widget import TestTreeWidget
+from src.gui.theme import divider, form_layout, refresh_style
 from src.packet_engine.preflight import run_preflight
 from src.proxy.config import ProxyMode
 from src.plotting.metrics import MetricsBuffer
@@ -82,8 +84,11 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(SPACE * 2, SPACE * 2, SPACE * 2, SPACE * 2)
+        root_layout.setSpacing(SPACE + 4)
 
-        root_layout.addWidget(self._build_config_group())
+        root_layout.addWidget(self._build_header())
+        root_layout.addWidget(self._build_config_bar())
 
         tabs = QTabWidget()
         tabs.addTab(self._build_suite_tab(), "Automated Suite")
@@ -96,9 +101,61 @@ class MainWindow(QMainWindow):
         self._report_panel = ReportPanel()
         root_layout.addWidget(self._report_panel)
 
+    def _build_header(self) -> QWidget:
+        """Title block plus the run-state pill.
+
+        The pill is the one place the window says what it is doing right
+        now: the log scrolls, the plot is only meaningful mid-run, and the
+        verdict used to be legible solely by reading the last log line.
+        """
+        bar = QWidget()
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(2, 0, 2, 0)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(1)
+        title = QLabel("Network Stack Test Suite")
+        title.setProperty("role", "heading")
+        subtitle = QLabel("RFC conformance and vulnerability probing against a live DUT")
+        subtitle.setProperty("role", "caption")
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
+
+        self._status_pill = QLabel()
+        self._status_pill.setProperty("role", "chip")
+        self._set_status("Idle — configure the DUT, pick tests, run", state="idle")
+
+        layout.addLayout(titles)
+        layout.addStretch(1)
+        layout.addWidget(self._status_pill, alignment=Qt.AlignmentFlag.AlignVCenter)
+        return bar
+
+    def _set_status(self, text: str, *, state: str) -> None:
+        """Update the header pill. `state` is one of the theme's
+        `idle`/`ok`/`bad` inks."""
+        self._status_pill.setText(text)
+        self._status_pill.setProperty("state", state)
+        refresh_style(self._status_pill)
+
+    def _build_config_bar(self) -> QWidget:
+        """The two configuration cards, side by side.
+
+        They were one 13-row column, which pushed the tabs — the tree, the
+        plot, the log, everything a run is actually watched through — off
+        the bottom of a laptop screen. Splitting endpoint configuration
+        from proxy topology also states which fields belong together.
+        """
+        bar = QWidget()
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE + 4)
+        layout.addWidget(self._build_config_group(), stretch=3)
+        layout.addWidget(self._build_proxy_group(), stretch=2)
+        self._config_bar = bar
+        return bar
+
     def _build_config_group(self) -> QGroupBox:
         box = QGroupBox("DUT configuration")
-        form = QFormLayout(box)
 
         self._iface_combo = QComboBox()
         interface_names = _list_interface_names()
@@ -136,8 +193,39 @@ class MainWindow(QMainWindow):
         self._confirm_vuln = QCheckBox("I authorize vuln-marked tests against this target")
         self._debug = QCheckBox("Debug mode (write tshark-style per-packet debug.log)")
 
-        # Proxy-DUT topology (only used by the `proxy` test module; leave the
-        # mode off for ordinary endpoint testing).
+        left = form_layout()
+        left.addRow("Interface", self._iface_combo)
+        left.addRow("Target IP", self._target_ip)
+        left.addRow("Target MAC", self._target_mac)
+        left.addRow("Allowed targets (CIDR)", self._allowed_targets)
+
+        right = form_layout()
+        right.addRow("Target stack", self._target_stack)
+        right.addRow("Role", self._role)
+        right.addRow("Destination port", self._dst_port)
+        right.addRow("Source port", self._src_port)
+
+        columns = QHBoxLayout()
+        columns.setSpacing(SPACE * 3)
+        columns.addLayout(left, stretch=1)
+        columns.addLayout(right, stretch=1)
+
+        layout = QVBoxLayout(box)
+        layout.setSpacing(SPACE + 2)
+        layout.addLayout(columns)
+        layout.addWidget(divider())
+        layout.addWidget(self._debug)
+        layout.addWidget(self._confirm_vuln)
+        return box
+
+    def _build_proxy_group(self) -> QGroupBox:
+        """Proxy-DUT topology — its own card because it is a different
+        subject: these fields describe a *relay* under test, and every one
+        of them is inert for ordinary endpoint testing."""
+        box = QGroupBox("Proxy topology (optional)")
+
+        # Only used by the `proxy` test module; leave the mode off for
+        # ordinary endpoint testing.
         self._proxy_mode = QComboBox()
         self._proxy_mode.addItem("(off)", userData=None)
         for mode in ProxyMode:
@@ -162,41 +250,59 @@ class MainWindow(QMainWindow):
             "proxy mode and backend so traffic can be induced through the front)."
         )
 
-        form.addRow("Interface", self._iface_combo)
-        form.addRow("Target IP", self._target_ip)
-        form.addRow("Target MAC (optional)", self._target_mac)
-        form.addRow("Source port (optional)", self._src_port)
-        form.addRow("Destination port", self._dst_port)
-        form.addRow("Target stack", self._target_stack)
-        form.addRow("Role", self._role)
-        form.addRow("Allowed targets (CIDR)", self._allowed_targets)
-        form.addRow(self._confirm_vuln)
-        form.addRow(self._debug)
+        form = form_layout()
         form.addRow("Proxy mode", self._proxy_mode)
         form.addRow("Proxy front", self._proxy_front)
         form.addRow("Proxy backend", self._proxy_backend)
         form.addRow("Proxy leg (all tests)", self._proxy_leg)
+
+        hint = QLabel(
+            "Leave the mode off unless the DUT is a relay. A back leg also needs "
+            "the other instance running the Proxy Backend tab."
+        )
+        hint.setProperty("role", "caption")
+        hint.setWordWrap(True)
+
+        layout = QVBoxLayout(box)
+        layout.setSpacing(SPACE + 2)
+        layout.addLayout(form)
+        layout.addStretch(1)
+        layout.addWidget(hint)
         return box
 
     def _build_suite_tab(self) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
+        layout.setContentsMargins(SPACE + 2, SPACE + 2, SPACE + 2, SPACE + 2)
 
         left_widget = QWidget()
         left = QVBoxLayout(left_widget)
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(SPACE)
         self._tree = TestTreeWidget()
         self._tree.currentItemChanged.connect(self._on_tree_selection)
+        self._tree.setMinimumHeight(140)
         left.addWidget(self._tree, stretch=3)
         # Per-test description: what the selected test checks + its RFC.
+        # Capped, because a stretch factor alone lost to the description
+        # box's size hint and left the tree two rows tall.
         self._details = TestDetailsPanel()
+        self._details.setMaximumHeight(170)
         left.addWidget(self._details, stretch=1)
+
         buttons = QHBoxLayout()
-        run_button = QPushButton("Run selected")
-        run_button.clicked.connect(self._on_run_clicked)
-        stop_button = QPushButton("Stop")
-        stop_button.clicked.connect(self._controller.stop)
-        buttons.addWidget(run_button)
-        buttons.addWidget(stop_button)
+        buttons.setSpacing(SPACE)
+        self._run_button = QPushButton("Run selected")
+        self._run_button.setProperty("accent", "true")
+        self._run_button.clicked.connect(self._on_run_clicked)
+        self._stop_button = QPushButton("Stop")
+        self._stop_button.setProperty("danger", "true")
+        # Enabled only while a run is in flight: a Stop that is always
+        # available says nothing about whether anything is running.
+        self._stop_button.setEnabled(False)
+        self._stop_button.clicked.connect(self._controller.stop)
+        buttons.addWidget(self._run_button, stretch=1)
+        buttons.addWidget(self._stop_button)
         left.addLayout(buttons)
 
         self._right_tabs = QTabWidget()
@@ -206,10 +312,21 @@ class MainWindow(QMainWindow):
         self._right_tabs.addTab(self._log_panel, "Log")
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         splitter.addWidget(left_widget)
         splitter.addWidget(self._right_tabs)
+        # The picker needs about a third: enough for long nodeids, not so
+        # much that the plot and log — the live half — get squeezed.
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([420, 630])
         layout.addWidget(splitter)
         return widget
+
+    def _set_running(self, running: bool) -> None:
+        """Swap Run/Stop availability for the run in flight."""
+        self._run_button.setEnabled(not running)
+        self._stop_button.setEnabled(running)
 
     def _resolved_dst_port(self) -> int:
         """The Destination port field, or a session-stable random ephemeral
@@ -267,6 +384,7 @@ class MainWindow(QMainWindow):
         self._log_panel.clear_log()
         self._launch_failed = False
         self._stopped = False
+        self._set_status("Preflight…", state="idle")
         # Surface progress/errors as text — the Log tab is where the run
         # actually reports what happened (a blank Live plot was exactly why
         # a failed run looked like "nothing happened").
@@ -298,6 +416,8 @@ class MainWindow(QMainWindow):
                 f"backend={request.backend_host or '-'}:{request.backend_port or '-'} "
                 "(the backend instance must be running)."
             )
+        self._set_status(f"Running — {selection}", state="idle")
+        self._set_running(True)
         self._controller.start(request)
 
     def _report_and_validate_topology(self, config: DUTConfig) -> bool:
@@ -394,6 +514,8 @@ class MainWindow(QMainWindow):
         """The runner process never started. Nothing else will report it —
         a QProcess that fails to start emits no `finished`."""
         self._launch_failed = True
+        self._set_running(False)
+        self._set_status("Could not start the run", state="bad")
         self._log_panel.append_line(message)
         self._log_panel.append_line("No tests were run.")
 
@@ -416,6 +538,8 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self, result: TestRunResult) -> None:
         self._report_panel.set_result(result)
+        self._set_running(False)
+        self._set_status(*_verdict(result, stopped=self._stopped, launch_failed=self._launch_failed))
         if self._launch_failed:
             return  # _on_launch_failed already said what went wrong
         if self._stopped:
@@ -440,6 +564,26 @@ class MainWindow(QMainWindow):
                     "Everything selected was skipped — see the SKIP reason(s) above "
                     "(often a role mismatch: switch the Role selector)."
                 )
+
+
+def _verdict(result: TestRunResult, *, stopped: bool, launch_failed: bool) -> tuple[str, str]:
+    """The header pill's text and ink for a finished run.
+
+    Kept next to the log lines it summarises: the pill is the glanceable
+    form of exactly what `_on_finished` writes out, so the two are read
+    together and cannot disagree about what happened.
+    """
+    if launch_failed:
+        return "Could not start the run", "bad"
+    if stopped:
+        return f"Stopped — {result.counts_summary}", "idle"
+    if result.errored:
+        return f"pytest exited {result.pytest_returncode} — see the Log", "bad"
+    if result.total == 0:
+        return "No tests ran", "bad"
+    if result.failed or result.errors:
+        return f"{result.failed} failed, {result.errors} errored of {result.total}", "bad"
+    return f"All {result.total} selected tests passed", "ok"
 
 
 def _split_host_port(text: str) -> tuple[str | None, int | None]:

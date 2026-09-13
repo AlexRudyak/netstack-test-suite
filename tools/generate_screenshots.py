@@ -23,6 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QTreeWidgetItem, QWidget  # noqa: E402
 
+from src.gui.theme import apply_theme  # noqa: E402
 from src.plotting.metrics import MetricsBuffer  # noqa: E402
 from src.reporting.models import (  # noqa: E402
     PacketDirection,
@@ -270,8 +271,9 @@ def shot_config_group() -> None:
 
     window = MainWindow()
     fill_config(window)
-    group = window.centralWidget().layout().itemAt(0).widget()
-    capture(group, "gui-dut-configuration", (780, 400))
+    window._proxy_front.setText("192.0.2.5:1080")
+    window._proxy_backend.setText("192.0.2.9:9099")
+    capture(window._config_bar, "gui-dut-configuration", (1180, 260))
     window.close()
 
 
@@ -302,7 +304,7 @@ def shot_test_details() -> None:
         catalog.CATALOG[0],
     )
     panel.show_spec(spec)
-    capture(panel, "gui-test-details", (580, 270))
+    capture(panel, "gui-test-details", (580, 280))
 
 
 def shot_log_panel() -> None:
@@ -332,7 +334,7 @@ def shot_report_panel() -> None:
 
     panel = ReportPanel()
     panel.set_result(sample_result())
-    capture(panel, "gui-report-panel", (660, 96))
+    capture(panel, "gui-report-panel", (860, 64))
 
 
 def shot_custom_packet() -> None:
@@ -406,6 +408,8 @@ def shot_static_charts() -> None:
 def main() -> int:
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     app = QApplication.instance() or QApplication(sys.argv)
+    # The docs must show the app as it ships, theme included.
+    apply_theme(app)
 
     print("Generating GUI screenshots...")
     shot_main_window()

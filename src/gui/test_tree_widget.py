@@ -40,6 +40,15 @@ class TestTreeWidget(QTreeWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setHeaderLabels(["Test"])
+        # Presentation only, but the tree is the window's densest widget:
+        # a taller uniform row and a shallower indent keep four levels of
+        # nesting legible without a horizontal scrollbar, and the animated
+        # expand makes a cascade of check marks readable as it happens.
+        self.setIndentation(16)
+        self.setUniformRowHeights(True)
+        self.setAnimated(True)
+        self.setExpandsOnDoubleClick(True)
+        self.header().setStretchLastSection(True)
         self._populate()
         self.itemChanged.connect(self._on_item_changed)
 

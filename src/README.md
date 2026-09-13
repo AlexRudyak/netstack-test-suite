@@ -12,6 +12,7 @@ privileges *except* the moment a socket is actually opened
 |---|---|---|
 | [`config.py`](#configpy) | `DUTConfig` + `Role` — where to send, which side to play, the safety allow-list | — |
 | [`catalog.py`](#catalogpy) | Per-test metadata (description, RFC, roles) driving the GUI + docs | — |
+| [`design_tokens.py`](#design_tokenspy) | The interface's colours, spacing and type — read by the GUI, the live plot and the HTML report | — |
 | [`runner.py`](#runnerpy) | Subprocess-based run orchestration shared by CLI + GUI | — |
 | [`packet_engine/`](packet_engine/README.md) | Packet crafting, L2 send/receive/sniff, pcap recording, seq tracking, payloads | ✔ |
 | [`target_profiles/`](target_profiles/README.md) | Linux/Windows behavioral baselines; strict vs. informational | ✔ |
@@ -97,6 +98,25 @@ real test functions so the catalog and the tests can't silently diverge.
 | `TestSpec` | frozen dataclass | `.rel_path`, `.nodeid`, `.role_labels` derived properties. |
 | `specs_for_rel_path` | `(rel_path) -> list[TestSpec]` | All specs defined in a test file (used by the GUI tree). |
 | `find_by_nodeid` / `find_by_test` | `-> TestSpec \| None` | Lookups for the details panel. |
+
+## design_tokens.py
+
+One import-free table of colours, spacing, radii and font stacks. The Qt
+stylesheet ([`gui/theme.py`](gui/README.md#themepy)), the live plot's pens
+([`plotting/realtime_plotter.py`](plotting/README.md)) and the HTML
+report's CSS custom properties
+([`reporting/html_report.py`](reporting/README.md)) all read it, so a
+palette change lands on every surface at once instead of in whichever file
+was edited.
+
+It sits at the bottom of the import graph deliberately — it depends on
+nothing, including Qt, so the reporting layer can share a palette with the
+front end without acquiring a dependency on a GUI toolkit. Run outcome
+inks (`OUTCOME_INK`) are the dark-background counterparts of the
+light-document hexes in
+[`reporting/palette.py`](reporting/README.md), which stays the authority
+for the printed report.
+
 
 ## runner.py
 

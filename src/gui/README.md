@@ -14,6 +14,7 @@ Installed as `netstack-gui`.
 | Module | Widget / role |
 |---|---|
 | `app.py` | `main()` — `QApplication` entry point |
+| `theme.py` | `apply_theme()` — the one stylesheet, palette and layout helpers |
 | `main_window.py` | `MainWindow` — top-level layout, config, wiring |
 | `run_controller.py` | `RunController` — `QProcess` run driver, emits Qt signals |
 | `test_tree_widget.py` | `TestTreeWidget` — checkbox picker, drills down to test functions |
@@ -33,11 +34,14 @@ after any GUI change to refresh them.
 
 ```
 MainWindow
-├── DUT configuration group  (interface, target IP/MAC, optional source
-│                             port, destination port [blank = random],
-│                             target stack, role, allowed CIDRs,
-│                             vuln-confirm, debug checkboxes, proxy
-│                             mode/front/backend/leg)
+├── Header          (title + run-state pill: idle / running / verdict)
+├── Config bar
+│   ├── DUT configuration   (interface, target IP/MAC, allowed CIDRs |
+│   │                        target stack, role, destination port
+│   │                        [random = session-stable ephemeral], optional
+│   │                        source port; debug + vuln-confirm switches)
+│   └── Proxy topology      (proxy mode/front/backend/leg — inert unless
+│                            the DUT is a relay)
 ├── Tabs
 │   ├── Automated Suite
 │   │   ├── TestTreeWidget  +  Run / Stop
@@ -59,20 +63,63 @@ exits). Declining UAC continues non-elevated — the preflight check then
 surfaces the privilege requirement on the first run. See
 [`permissions.py`](../utils/README.md#permissionspy).
 
+## theme.py
+
+The whole application's look, in one place. `apply_theme(app)` is called
+once from [`app.py`](app.py) before the first window exists (and by
+[`tools/generate_screenshots.py`](../../tools/generate_screenshots.py), so
+the images on this page are of the app as it ships).
+
+| Function | Description |
+|---|---|
+| `apply_theme(app)` | Fusion base style + `QPalette` + default font + `stylesheet()`. |
+| `stylesheet()` | The QSS, built from [`src/design_tokens.py`](../design_tokens.py). |
+| `form_layout()` | A form column with the shared row rhythm — every form is built through it. |
+| `divider()` | A hairline rule between a card's fields and its switches. |
+| `refresh_style(widget)` | Re-polish after a property changed (Qt resolves property selectors at polish time). |
+
+Widgets take a **role**, never a colour — no widget outside this module
+carries a stylesheet of its own:
+
+| Property | Effect |
+|---|---|
+| `accent="true"` on a `QPushButton` | filled primary action (Run selected, Send packet, Export PDF) |
+| `danger="true"` on a `QPushButton` | Stop / destructive |
+| `role="heading"` / `"subheading"` / `"caption"` / `"chip"` on a `QLabel` | type scale and metadata pills |
+| `state="ok"` / `"bad"` / `"idle"` on a `QLabel` | status ink |
+| `role="console"` on a text view | monospaced, sunken well |
+
+Two Qt facts the module exists to absorb: a palette is needed *as well as*
+a stylesheet (menus, tooltips, selection and the native file dialog never
+read QSS), and styling a check box or combo arrow in QSS replaces Qt's
+painted glyph with nothing — so the check, dash, dot and chevron glyphs
+are drawn here into pixmaps (`@2x` included) and referenced by path.
+
+The palette itself lives one layer down in
+[`src/design_tokens.py`](../design_tokens.py), which imports nothing: the
+live plot ([`plotting/realtime_plotter.py`](../plotting/realtime_plotter.py))
+and the HTML report read the same tokens, so the widgets, the curves and
+the exported document cannot drift apart.
+
+
 ## main_window.py
 
 `MainWindow(QMainWindow)` — builds the UI and connects `RunController`
 signals to the plot/log/report widgets.
 
-The DUT configuration group built by `_build_config_group()`:
+The configuration bar built by `_build_config_bar()` — endpoint settings
+and proxy topology as two cards:
 
-![DUT configuration group](../../docs/images/gui-dut-configuration.png)
+![The configuration bar](../../docs/images/gui-dut-configuration.png)
 
 | Method | Description |
 |---|---|
+| `_build_header()` | Title block and the run-state pill (`_set_status`), the one glanceable statement of what the window is doing; `_verdict()` derives its wording from the finished `TestRunResult`. |
+| `_build_config_bar()` | The two configuration cards side by side — `_build_config_group()` and `_build_proxy_group()`. |
 | `_build_config_group()` | DUT config form: interface, target IP/MAC, optional **Source port** (spinbox showing `auto` at 0 → `None`), **Destination port** (spinbox showing `random` at 0), target stack, role, allowed CIDRs, plus the **Debug mode** and vuln-authorization checkboxes. |
 | `_resolved_dst_port()` | The Destination port field, or a session-stable random ephemeral port (`src.config.random_ephemeral_port`) when it's left on `random`. Chosen once, then reused for every run in the session; logged on the run that first picks it. |
-| `_build_suite_tab()` | Test tree + Run/Stop + live-plot/log tabs. |
+| `_build_proxy_group()` | Proxy-DUT topology: mode, front, backend, leg. |
+| `_build_suite_tab()` | Test tree + Run/Stop + live-plot/log tabs. `_set_running()` keeps Stop enabled only while a run is in flight. |
 | `_current_dut_config() -> DUTConfig` | Reads the form into a `DUTConfig`, applying the **Proxy leg**: `front` retargets to the Proxy front address/port and forces the client role, `back` forces the server role (the leg implies the role, so it overrides the Role selector). |
 | `_selected_proxy_leg() -> ProxyLeg \| None` | The Proxy leg combo, or `None` for ordinary endpoint testing. |
 | `_on_run_clicked()` | Switches to the Log tab, runs the **preflight** check (aborting with a logged reason on a hard blocker), derives scope from the tree, builds a `RunRequest` (with `debug`/`confirm_vuln_tests`/proxy topology), starts the controller. A `back` leg with no proxy mode or backend address is refused here with an explanation — otherwise every server-role test would silently time out. |
@@ -130,8 +177,7 @@ only one test function beneath it is selected.
 ## test_details_panel.py
 
 `TestDetailsPanel(QWidget)` — `show_spec(spec)` renders the selected
-test's title, RFC connection, applicable roles, markers, and full
-description. Updated from `MainWindow._on_tree_selection` as the tree
+test's title, its RFC/roles/markers as chips, and the full description. Updated from `MainWindow._on_tree_selection` as the tree
 selection changes, so each test explains exactly what it checks.
 
 ![Per-test details panel](../../docs/images/gui-test-details.png)
@@ -141,6 +187,11 @@ selection changes, so each test explains exactly what it checks.
 `LogPanel(QPlainTextEdit)` — `append_line(text)`, `append_test_event(event)`
 (prefixes PASS/FAIL/SKIP/ERR), `clear_log()`.
 
+Monospaced, and each outcome line is inked from `design_tokens.OUTCOME_INK`
+— the dark-background counterpart of the report's
+[`reporting/palette.py`](../reporting/palette.py). In a run of a hundred
+tests the four failures are what is being scanned for.
+
 ![Log panel showing preflight output and per-test outcomes](../../docs/images/gui-log-panel.png)
 
 The Log tab is also what the main window switches to when a run starts — the preflight result and every outcome land here:
@@ -149,8 +200,10 @@ The Log tab is also what the main window switches to when a run starts — the p
 
 ## report_panel.py
 
-`ReportPanel(QWidget)` — `set_result(result)` remembers the latest run;
-`Export PDF` / `Export HTML` buttons call `generate_pdf_report` /
+`ReportPanel(QWidget)` — the window's footer bar: the run verdict on the
+left, the export buttons on the right. `set_result(result)` remembers the
+latest run and enables the buttons (there is nothing to export before
+one); `Export PDF` / `Export HTML` call `generate_pdf_report` /
 `generate_html_report` via a save dialog.
 
 ![Report panel after a completed run](../../docs/images/gui-report-panel.png)

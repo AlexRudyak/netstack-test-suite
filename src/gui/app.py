@@ -29,6 +29,7 @@ def main() -> None:
 
     from src import paths
     from src.gui.main_window import MainWindow
+    from src.gui.theme import apply_theme
     from src.utils.logging_config import configure_logging
     from src.utils.permissions import ElevationResult, relaunch_module_as_admin
 
@@ -54,6 +55,9 @@ def main() -> None:
         )
 
     app = QApplication(sys.argv)
+    # Before the first widget exists: the theme sets the base style and
+    # palette, which Qt only applies cleanly to widgets created after it.
+    apply_theme(app)
     _install_excepthook(log)
     window = MainWindow()
     window.show()

@@ -12,6 +12,7 @@ dependencies = [
     "click>=8.1.0",
     "reportlab>=4.0.0",
     "matplotlib>=3.8.0",
+    "pydivert>=2.1.0; sys_platform == 'win32'",  # host RST guard, see src/packet_engine/rst_guard.py
 ]
 
 [project.optional-dependencies]

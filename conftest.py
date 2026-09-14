@@ -274,6 +274,9 @@ def network_interface(pytestconfig: pytest.Config, dut_config: DUTConfig):
     their own sniff filters and cleanup on top. Flushes the run's pcap
     capture on session teardown.
     """
+    from scapy.arch import get_if_addr
+
+    from src.packet_engine.rst_guard import start_for_host
     from src.utils.permissions import require_elevation
 
     require_elevation()
@@ -281,6 +284,12 @@ def network_interface(pytestconfig: pytest.Config, dut_config: DUTConfig):
     live_events_path = pytestconfig.getoption("--live-events-log")
     capture_path = pytestconfig.getoption("--capture-pcap")
     writer = PacketEventLogWriter(Path(live_events_path)) if live_events_path else None
+
+    # See src/packet_engine/rst_guard.py: on Windows, the host's own
+    # TCP/IP stack answers the DUT's replies with its own RST before the
+    # test framework ever processes them, since these are raw L2 sends the
+    # OS never opened a socket for. A no-op on every other host OS.
+    rst_guard = start_for_host(get_if_addr(dut_config.interface))
 
     iface = NetworkInterface(
         dut_config.interface,
@@ -292,6 +301,8 @@ def network_interface(pytestconfig: pytest.Config, dut_config: DUTConfig):
     iface.close()
     if writer:
         writer.close()
+    if rst_guard is not None:
+        rst_guard.stop()
 
 
 @pytest.fixture(scope="session")

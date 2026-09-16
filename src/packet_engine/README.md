@@ -56,11 +56,13 @@ Constructor: `NetworkInterface(iface, capture_path=None, on_packet=None, backend
 | `close` | `() -> None` | Closes the pcap writer; also the context-manager exit. |
 
 Every send/receive runs through a private `_record`, which (1) **streams**
-the frame to a `PcapWriter` (opened lazily on the first packet when
+the frame to a `PcapNgWriter` (opened lazily on the first packet when
 `capture_path` is set — bounded memory, valid file even if interrupted),
-(2) forwards to `debug_logger` if debug mode is on (raw packet → tshark
-line), and (3) emits a `PacketEvent` to `on_packet` (the live-plot/GUI
-feed). `_DEBUG_DIRECTION` maps `PacketDirection` → `TX`/`RX`.
+tagging the frame's `.comments` with `test_nodeid` so the pcapng capture
+can be split back apart per test in Wireshark, (2) forwards to
+`debug_logger` if debug mode is on (raw packet → tshark line), and (3)
+emits a `PacketEvent` to `on_packet` (the live-plot/GUI feed).
+`_DEBUG_DIRECTION` maps `PacketDirection` → `TX`/`RX`.
 
 ## platform_backend.py
 
@@ -96,8 +98,8 @@ automated suite, the `send` command, and the GUI panel uniformly.
 `PacketRecorder` — passive on-wire capture to pcap, independent of any
 test run. Distinct from `NetworkInterface`'s per-run capture: this sniffs
 what genuinely crossed the wire (incl. OS retransmits, asymmetric reply
-paths). Writes incrementally (`PcapWriter(sync=True)`) so a long or
-interrupted capture still yields a valid file.
+paths). Writes incrementally (`PcapNgWriter`, `.flush()`ed per frame) so a
+long or interrupted capture still yields a valid file.
 
 Constructor: `PacketRecorder(iface, output_path, *, bpf_filter=None, on_packet=None, backend=None)`
 

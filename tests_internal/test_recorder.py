@@ -1,6 +1,6 @@
 """Unit tests for src/packet_engine/recorder.py: filter construction,
 incremental writing, and start/stop lifecycle — via monkeypatched Scapy
-AsyncSniffer/PcapWriter, no real NIC."""
+AsyncSniffer/PcapNgWriter, no real NIC."""
 from __future__ import annotations
 
 import pytest
@@ -23,13 +23,17 @@ class _StubBackend:
 
 
 class _FakeWriter:
-    def __init__(self, path, append, sync) -> None:
+    def __init__(self, path) -> None:
         self.path = path
         self.written: list = []
+        self.flushed = 0
         self.closed = False
 
     def write(self, packet) -> None:
         self.written.append(packet)
+
+    def flush(self) -> None:
+        self.flushed += 1
 
     def close(self) -> None:
         self.closed = True
@@ -68,8 +72,8 @@ def test_build_host_filter() -> None:
 def patched(monkeypatch):
     created = {}
 
-    def make_writer(path, append, sync):
-        writer = _FakeWriter(path, append, sync)
+    def make_writer(path):
+        writer = _FakeWriter(path)
         created["writer"] = writer
         return writer
 
@@ -78,7 +82,7 @@ def patched(monkeypatch):
         created["sniffer"] = sniffer
         return sniffer
 
-    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", make_writer)
+    monkeypatch.setattr("src.packet_engine.pcap.PcapNgWriter", make_writer)
     monkeypatch.setattr("src.packet_engine.recorder.AsyncSniffer", make_sniffer)
     return created
 
@@ -168,8 +172,8 @@ class _FailedSniffer(_FakeSniffer):
 def patched_failing(monkeypatch):
     created = {}
 
-    def make_writer(path, append, sync):
-        writer = _FakeWriter(path, append, sync)
+    def make_writer(path):
+        writer = _FakeWriter(path)
         created["writer"] = writer
         return writer
 
@@ -178,7 +182,7 @@ def patched_failing(monkeypatch):
         created["sniffer"] = sniffer
         return sniffer
 
-    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", make_writer)
+    monkeypatch.setattr("src.packet_engine.pcap.PcapNgWriter", make_writer)
     monkeypatch.setattr("src.packet_engine.recorder.AsyncSniffer", make_sniffer)
     return created
 

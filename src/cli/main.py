@@ -484,7 +484,7 @@ def record(
     # started (bad interface, invalid BPF filter) by raising, and an
     # exception escaping a finally clause would suppress the count line and
     # replace the Ctrl+C path's clean exit with whatever it carries. The
-    # capture file is already valid on disk either way — PcapWriter flushes
+    # capture file is already valid on disk either way — the recorder flushes
     # per frame — so there is nothing here that must run on the error path.
     written = recorder.stop()
     click.echo(f"Wrote {written} packet(s) to {output_path}")

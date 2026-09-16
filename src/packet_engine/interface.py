@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from scapy.packet import Packet
 from scapy.sendrecv import sendp, sniff as scapy_sniff, srp1
-from scapy.utils import PcapWriter
+from scapy.utils import PcapNgWriter
 
 from src.packet_engine.pcap import open_pcap
 from src.packet_engine.platform_backend import SocketBackend, get_backend
@@ -54,7 +54,7 @@ class NetworkInterface:
         # flood runs and keeps the pcap valid if the run is interrupted.
         # Opened lazily on the first packet so a run with a capture path but
         # zero packets leaves no empty file.
-        self._pcap_writer: PcapWriter | None = None
+        self._pcap_writer: PcapNgWriter | None = None
         self._packet_count = 0
         # A list, not a single slot. `on_packet` was one callback, so the
         # GUI's live view and the jsonl writer could not both subscribe —
@@ -116,7 +116,13 @@ class NetworkInterface:
             with self._lock:
                 if self._pcap_writer is None:
                     self._pcap_writer = open_pcap(self._capture_path)
+                # pcapng packet comment, so the capture can be split back
+                # apart per test (Wireshark: Statistics > Comments, or
+                # filter on pkt_comment) without cross-referencing the
+                # debug log's {test=...} markers.
+                packet.comments = [test_nodeid.encode("utf-8")] if test_nodeid else None
                 self._pcap_writer.write(packet)
+                self._pcap_writer.flush()
                 self._packet_count += 1
         if self._debug_logger is not None:
             self._debug_logger.log_packet(

@@ -11,7 +11,7 @@ reply path.
 
 Runs independently of any test run: start it, exercise the DUT however
 you like (a `send`, a GUI session, a manual poke), stop it. Writing is
-incremental via PcapWriter so a long capture survives an abrupt exit and
+incremental via PcapNgWriter so a long capture survives an abrupt exit and
 lands on disk as packets are seen, not buffered until the end.
 
 Scope stays L3/L4: the default BPF filter narrows to the conversation
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from scapy.packet import Packet
 from scapy.sendrecv import AsyncSniffer
-from scapy.utils import PcapWriter
+from scapy.utils import PcapNgWriter
 
 from src.errors import CaptureError
 from src.packet_engine.pcap import open_pcap
@@ -76,7 +76,7 @@ class PacketRecorder:
 
         self._lock = threading.Lock()
         self._packet_count = 0
-        self._writer: PcapWriter | None = None
+        self._writer: PcapNgWriter | None = None
         self._sniffer: AsyncSniffer | None = None
 
     @property
@@ -109,7 +109,8 @@ class PacketRecorder:
             # guard against a frame arriving after _close_writer().
             log.warning("Dropping a frame recorded after the capture was closed")
             return
-        writer.write(packet)  # incremental flush to disk
+        writer.write(packet)
+        writer.flush()  # incremental flush to disk
         with self._lock:
             self._packet_count += 1
         for sink in self._sinks:

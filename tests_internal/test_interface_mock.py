@@ -72,34 +72,39 @@ def test_send_receive_handles_no_reply(monkeypatch, stub_packet) -> None:
 
 
 def test_capture_streams_to_pcap_writer(monkeypatch, tmp_path, stub_packet) -> None:
-    """Frames are streamed to a PcapWriter as recorded (not buffered and
+    """Frames are streamed to a PcapNgWriter as recorded (not buffered and
     written in one shot), the parent dir is created lazily on first
     packet, and the writer is closed on close()."""
     monkeypatch.setattr("src.packet_engine.interface.sendp", lambda pkt, iface, verbose: None)
 
-    state: dict = {"written": [], "closed": False}
+    state: dict = {"written": [], "flushed": 0, "closed": False}
 
     class _FakeWriter:
-        def __init__(self, path, append, sync):
+        def __init__(self, path):
             state["path"] = path
 
         def write(self, packet):
             state["written"].append(packet)
 
+        def flush(self):
+            state["flushed"] += 1
+
         def close(self):
             state["closed"] = True
 
-    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", _FakeWriter)
+    monkeypatch.setattr("src.packet_engine.pcap.PcapNgWriter", _FakeWriter)
 
     capture_path = tmp_path / "run" / "capture.pcap"
     iface = NetworkInterface("dummy0", capture_path=capture_path, backend=_StubBackend())
-    iface.send(stub_packet)
-    iface.send(stub_packet)
+    iface.send(stub_packet, test_nodeid="tests/x.py::test_one")
+    iface.send(stub_packet, test_nodeid="tests/x.py::test_one")
 
     assert capture_path.parent.exists()  # created lazily on first packet
     assert state["path"] == str(capture_path)
     assert len(state["written"]) == 2
+    assert state["flushed"] == 2
     assert iface.captured_count == 2
+    assert stub_packet.comments == [b"tests/x.py::test_one"]
 
     iface.close()
     assert state["closed"] is True
@@ -110,16 +115,19 @@ def test_no_pcap_writer_when_no_packets(monkeypatch, tmp_path) -> None:
     opened = {"count": 0}
 
     class _FakeWriter:
-        def __init__(self, path, append, sync):
+        def __init__(self, path):
             opened["count"] += 1
 
         def write(self, packet):
             pass
 
+        def flush(self):
+            pass
+
         def close(self):
             pass
 
-    monkeypatch.setattr("src.packet_engine.pcap.PcapWriter", _FakeWriter)
+    monkeypatch.setattr("src.packet_engine.pcap.PcapNgWriter", _FakeWriter)
 
     iface = NetworkInterface("dummy0", capture_path=tmp_path / "capture.pcap", backend=_StubBackend())
     iface.close()
